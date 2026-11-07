@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>3D view</title>
+<!-- BTV Digital Explorer · 3D view (pilot, 6 Nov 2026). Opened from a BTV card as models3d/viewer.html?m=<slug>&lang=<en|fr|es|ar>.
+     Models are built from open data by tools/model3d/build_village3d.py (Blender): OpenStreetMap footprints, streets, paths,
+     piers and woods (© OpenStreetMap contributors, ODbL) on AWS Terrain Tiles; heights, colours and details are illustrative.
+     Interface strings below are drafts, like the Explorer's other translations. -->
+<style>
+  :root { --bg: #0e1113; --fg: #e3e7ea; --mute: #9aa3aa; --line: rgba(255,255,255,.14); --chip: rgba(18,22,25,.72); --acc: #e0b25a; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  .bar { position: absolute; left: 12px; right: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; pointer-events: none; }
+  .bar > * { pointer-events: auto; }
+  #top { top: 12px; }
+  #bottom { bottom: 10px; flex-direction: column; align-items: stretch; gap: 6px; }
+  h1 { font-size: 16px; margin: 0 8px 0 0; font-weight: 650; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+  h1 small { display: block; font-weight: 400; color: var(--mute); font-size: 12px; }
+  .grp { display: flex; gap: 0; background: var(--chip); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; backdrop-filter: blur(6px); }
+  button { font: inherit; color: var(--fg); background: transparent; border: 0; padding: 6px 12px; cursor: pointer; min-height: 32px; }
+  button[aria-pressed="true"] { background: rgba(255,255,255,.16); }
+  button:focus-visible { outline: 2px solid var(--acc); outline-offset: -2px; }
+  .note { background: var(--chip); border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; font-size: 12px; color: var(--mute); backdrop-filter: blur(6px); }
+  .note b { color: var(--fg); font-weight: 600; }
+  .credit { font-size: 11px; color: var(--mute); text-align: center; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
+  #load[hidden] { display: none; }
+  #load { position: absolute; inset: 0; display: grid; place-items: center; color: var(--mute); font-size: 13px; }
+  #load div { width: min(260px, 70vw); }
+  #load i { display: block; height: 3px; background: var(--line); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+  #load i::after { content: ""; display: block; height: 100%; width: var(--p, 0%); background: var(--acc); transition: width .2s; }
+  /* points of interest and guided tour (7 Nov 2026) */
+  #pois { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  .poi { position: absolute; left: 0; top: 0; transform: translate(-50%, -100%); pointer-events: auto; display: flex; flex-direction: column; align-items: center; gap: 0; padding: 0; min-height: 0; background: none; border: 0; color: var(--fg); cursor: pointer; white-space: nowrap; }
+  .poi span { font-size: 12px; background: var(--chip); border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; backdrop-filter: blur(4px); max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+  .poi i { width: 1px; height: 14px; background: rgba(255,255,255,.55); }
+  .poi i::after { content: ""; display: block; width: 7px; height: 7px; border-radius: 50%; background: var(--k, var(--acc)); transform: translate(-3px, 12px); }
+  .poi.minor span { font-size: 11px; color: var(--mute); }
+  .poi.sel span { border-color: var(--acc); color: #fff; }
+  #panel { position: absolute; right: 12px; top: 60px; width: min(340px, calc(100vw - 24px)); background: rgba(14,17,19,.86); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; backdrop-filter: blur(8px); font-size: 13px; }
+  #panel[hidden] { display: none; }
+  #panel .k { color: var(--mute); font-size: 12px; text-transform: none; }
+  #panel h2 { font-size: 15px; margin: 2px 0 6px; font-weight: 650; }
+  #panel p { margin: 4px 0; color: #cfd5da; }
+  #panel .pr { display: block; width: 100%; text-align: start; border: 1px solid var(--line); border-left: 4px solid var(--g, #888); border-radius: 8px; padding: 6px 9px; margin-top: 6px; background: rgba(255,255,255,.04); min-height: 0; }
+  #panel .pr small { display: block; color: var(--mute); font-size: 11px; }
+  #panel .nav { display: flex; gap: 6px; justify-content: space-between; margin-top: 10px; align-items: center; }
+  #panel .nav button { border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; min-height: 28px; }
+  #panel .x { position: absolute; top: 6px; inset-inline-end: 6px; padding: 2px 8px; min-height: 0; color: var(--mute); }
+  #panel .src { font-size: 11px; color: var(--mute); margin-top: 8px; }
+  #panel .wd { color: var(--mute); font-size: 12px; margin: -2px 0 6px; }
+  #panel .wk { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+  #panel .wk p { margin: 0 0 4px; }
+  #panel .wk small { color: var(--mute); font-size: 11px; display: block; }
+  #panel .wk a { color: var(--acc); }
+  @media (max-width: 560px) { #panel { top: auto; bottom: 86px; right: 8px; left: 8px; width: auto; } .poi.minor { display: none; } }
+  @media (max-width: 560px) { h1 { width: 100%; } .note { font-size: 11px; } }
+</style>
+</head>
+<body>
+<canvas id="c" aria-label="3D view"></canvas>
+<div id="load"><div><span id="loadTxt">Loading the 3D model…</span><i id="loadBar"></i></div></div>
+<div class="bar" id="top">
+  <h1 id="title"></h1>
+  <div class="grp" role="group" id="moods"></div>
+  <div class="grp"><button id="rainBtn" aria-pressed="true"></button><button id="resetBtn"></button></div>
+  <div class="grp" id="poiGrp" hidden><button id="poiBtn" aria-pressed="true"></button><button id="tourBtn" hidden></button></div>
+</div>
+<div id="pois" aria-hidden="false"></div>
+<div id="panel" role="region" aria-live="polite" hidden></div>
+<div class="bar" id="bottom">
+  <div class="note" id="note"></div>
+  <div class="credit" id="credit"></div>
+</div>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }</script>
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+
+// ---------- interface strings (drafts in French, Spanish and Arabic) ----------
+const STR = {
+  en: { golden: 'Golden hour', load: 'Loading the 3D model…', fail: 'The 3D model could not be loaded.', missing: 'No 3D model for this BTV yet.', day: 'Day', dusk: 'Dusk', night: 'Night', rain: 'Rain', reset: 'Reset view',
+        pilot: '3D view · pilot', note: '<b>Illustrative model.</b> Layout, streets, paths, piers, woods and terrain come from open data; building heights, colours and details are styled. Drag to turn, scroll or pinch to zoom.' },
+  fr: { golden: 'Heure dorée', load: 'Chargement du modèle 3D…', fail: 'Le modèle 3D n’a pas pu être chargé.', missing: 'Pas encore de modèle 3D pour ce BTV.', day: 'Jour', dusk: 'Crépuscule', night: 'Nuit', rain: 'Pluie', reset: 'Réinitialiser la vue',
+        pilot: 'Vue 3D · pilote', note: '<b>Modèle illustratif.</b> Le plan, les rues, les chemins, les quais, les bois et le relief proviennent de données ouvertes ; la hauteur, les couleurs et les détails des bâtiments sont stylisés. Faites glisser pour tourner, utilisez la molette ou pincez pour zoomer.' },
+  es: { golden: 'Hora dorada', load: 'Cargando el modelo 3D…', fail: 'No se pudo cargar el modelo 3D.', missing: 'Todavía no hay modelo 3D para este BTV.', day: 'Día', dusk: 'Atardecer', night: 'Noche', rain: 'Lluvia', reset: 'Restablecer vista',
+        pilot: 'Vista 3D · piloto', note: '<b>Modelo ilustrativo.</b> El trazado, las calles, los caminos, los muelles, los bosques y el relieve proceden de datos abiertos; la altura, los colores y los detalles de los edificios son estilizados. Arrastre para girar; use la rueda o pellizque para acercar.' },
+  ar: { golden: 'الساعة الذهبية', load: 'جارٍ تحميل النموذج الثلاثي الأبعاد…', fail: 'تعذّر تحميل النموذج الثلاثي الأبعاد.', missing: 'لا يوجد نموذج ثلاثي الأبعاد لهذه القرية بعد.', day: 'نهار', dusk: 'غسق', night: 'ليل', rain: 'مطر', reset: 'إعادة ضبط العرض',
+        pilot: 'عرض ثلاثي الأبعاد · تجريبي', note: '<b>نموذج توضيحي.</b> المخطط والشوارع والممرات والأرصفة والغابات والتضاريس مأخوذة من بيانات مفتوحة؛ أما ارتفاعات المباني وألوانها وتفاصيلها فهي تقريبية. اسحب للتدوير، واستخدم العجلة أو الضم للتكبير.' },
+};
+// points of interest and guided tour (7 Nov 2026; drafts in French, Spanish and Arabic)
+const PSTR = {
+  en: { places: 'Places', tour: 'Guided tour', stop: 'Stop {0} of {1}', prev: '← Back', next: 'Next →', end: 'End tour', close: 'Close', practices: 'Good practices of the BTV', open: 'Open on the card',
+        walls: 'Town walls: about {0} km', towers: '{0} towers in the model', stay: '{0} places to stay and {1} places to eat or drink mapped in OpenStreetMap',
+        src: 'Names and kinds: OpenStreetMap contributors. Model: illustrative.', wiki: 'From Wikipedia', wikiOther: 'Wikipedia article in {0}', lic: 'text under CC BY-SA 4.0', read: 'Read the article', wdsrc: 'Short description: Wikidata', langs: { en: 'English', fr: 'French', es: 'Spanish', ar: 'Arabic', pt: 'Portuguese', it: 'Italian', de: 'German', ja: 'Japanese', ko: 'Korean', ka: 'Georgian' }, grade: { Strong: 'Proven', Medium: 'Promising', Weak: 'Positive signal' },
+        kind: { town: 'Walled town', castle: 'Castle', gate: 'Town gate', church: 'Church', chapel: 'Chapel', aqueduct: 'Aqueduct', museum: 'Museum', bookshop: 'Bookshop', library: 'Library', pillory: 'Pillory', viewpoint: 'Viewpoint', tower: 'Tower', attraction: 'Monument or attraction' } },
+  fr: { places: 'Lieux', tour: 'Visite guidée', stop: 'Étape {0} sur {1}', prev: '← Retour', next: 'Suivant →', end: 'Terminer la visite', close: 'Fermer', practices: 'Bonnes pratiques du BTV', open: 'Ouvrir sur la fiche',
+        walls: 'Remparts : environ {0} km', towers: '{0} tours dans le modèle', stay: '{0} hébergements et {1} lieux de restauration recensés dans OpenStreetMap',
+        src: 'Noms et types : contributeurs d’OpenStreetMap. Modèle : illustratif.', wiki: 'Extrait de Wikipédia', wikiOther: 'Article de Wikipédia en {0}', lic: 'texte sous licence CC BY-SA 4.0', read: 'Lire l’article', wdsrc: 'Description courte : Wikidata', langs: { en: 'anglais', fr: 'français', es: 'espagnol', ar: 'arabe', pt: 'portugais', it: 'italien', de: 'allemand', ja: 'japonais', ko: 'coréen', ka: 'géorgien' }, grade: { Strong: 'Avérée', Medium: 'Prometteuse', Weak: 'Signal positif' },
+        kind: { town: 'Ville fortifiée', castle: 'Château', gate: 'Porte de ville', church: 'Église', chapel: 'Chapelle', aqueduct: 'Aqueduc', museum: 'Musée', bookshop: 'Librairie', library: 'Bibliothèque', pillory: 'Pilori', viewpoint: 'Point de vue', tower: 'Tour', attraction: 'Monument ou site' } },
+  es: { places: 'Lugares', tour: 'Visita guiada', stop: 'Parada {0} de {1}', prev: '← Atrás', next: 'Siguiente →', end: 'Terminar la visita', close: 'Cerrar', practices: 'Buenas prácticas del BTV', open: 'Abrir en la ficha',
+        walls: 'Murallas: unos {0} km', towers: '{0} torres en el modelo', stay: '{0} alojamientos y {1} lugares para comer o beber registrados en OpenStreetMap',
+        src: 'Nombres y tipos: colaboradores de OpenStreetMap. Modelo: ilustrativo.', wiki: 'De Wikipedia', wikiOther: 'Artículo de Wikipedia en {0}', lic: 'texto bajo licencia CC BY-SA 4.0', read: 'Leer el artículo', wdsrc: 'Descripción breve: Wikidata', langs: { en: 'inglés', fr: 'francés', es: 'español', ar: 'árabe', pt: 'portugués', it: 'italiano', de: 'alemán', ja: 'japonés', ko: 'coreano', ka: 'georgiano' }, grade: { Strong: 'Probada', Medium: 'Prometedora', Weak: 'Señal positiva' },
+        kind: { town: 'Villa amurallada', castle: 'Castillo', gate: 'Puerta de la villa', church: 'Iglesia', chapel: 'Capilla', aqueduct: 'Acueducto', museum: 'Museo', bookshop: 'Librería', library: 'Biblioteca', pillory: 'Picota', viewpoint: 'Mirador', tower: 'Torre', attraction: 'Monumento o atractivo' } },
+  ar: { places: 'الأماكن', tour: 'جولة إرشادية', stop: 'المحطة {0} من {1}', prev: '→ رجوع', next: 'التالي ←', end: 'إنهاء الجولة', close: 'إغلاق', practices: 'الممارسات الجيدة في القرية', open: 'فتح في البطاقة',
+        walls: 'الأسوار: نحو {0} كم', towers: '{0} أبراج في النموذج', stay: '{0} أماكن إقامة و{1} أماكن للطعام أو الشراب مسجلة في OpenStreetMap',
+        src: 'الأسماء والأنواع: المساهمون في OpenStreetMap. النموذج: توضيحي.', wiki: 'من ويكيبيديا', wikiOther: 'مقالة ويكيبيديا باللغة {0}', lic: 'النص مرخّص بموجب CC BY-SA 4.0', read: 'قراءة المقالة', wdsrc: 'الوصف المختصر: ويكي بيانات', langs: { en: 'الإنجليزية', fr: 'الفرنسية', es: 'الإسبانية', ar: 'العربية', pt: 'البرتغالية', it: 'الإيطالية', de: 'الألمانية', ja: 'اليابانية', ko: 'الكورية', ka: 'الجورجية' }, grade: { Strong: 'مثبتة', Medium: 'واعدة', Weak: 'مؤشر إيجابي' },
+        kind: { town: 'بلدة مسوّرة', castle: 'قلعة', gate: 'بوابة البلدة', church: 'كنيسة', chapel: 'كنيسة صغيرة', aqueduct: 'قناة مياه', museum: 'متحف', bookshop: 'مكتبة لبيع الكتب', library: 'مكتبة عامة', pillory: 'عمود التشهير', viewpoint: 'نقطة مشاهدة', tower: 'برج', attraction: 'معلم أو موقع جذب' } },
+};
+const q = new URLSearchParams(location.search), LANG = STR[q.get('lang')] ? q.get('lang') : 'en', T = STR[LANG], SLUG = (q.get('m') || '').replace(/[^a-z0-9-]/g, '');
+const PT = PSTR[LANG] || PSTR.en, fmt = (s, ...a) => s.replace(/\{(\d)\}/g, (_, i) => a[i]);
+// model data written by tools/model3d/build_village3d.py: origin, water, first camera, credit
+async function m3dGet(name, type) {   // plain file locally; online the encrypted copy, opened with the key the password page left for this tab
+  const r = await fetch(name).catch(() => null);
+  if (r && r.ok) return type === 'json' ? r.json() : r.arrayBuffer();
+  const k = sessionStorage.getItem('btv-m3d'); if (!k) throw new Error('locked');
+  const key = await crypto.subtle.importKey('raw', Uint8Array.from(atob(k), c => c.charCodeAt(0)), 'AES-GCM', false, ['decrypt']);
+  // online the encrypted copies live in their own repository on the same origin (7 Nov 2026, weight)
+  const base = /\.github\.io$/.test(location.hostname) ? '/btv-explorer-models/' : '';
+  const e = new Uint8Array(await (await fetch(base + name + '.enc')).arrayBuffer());
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: e.slice(0, 12) }, key, e.slice(12));
+  return type === 'json' ? JSON.parse(new TextDecoder().decode(plain)) : plain;
+}
+const M = SLUG ? await m3dGet(`${SLUG}.json`, 'json').catch(() => null) : null;
+if (M) { M.name = M.btv; M.file = `${SLUG}.glb`; M.glow = M.glow || [-0.9, 0, 0.4]; }
+document.documentElement.lang = LANG; if (LANG === 'ar') document.documentElement.dir = 'rtl';
+const $ = id => document.getElementById(id);
+$('loadTxt').textContent = T.load; $('rainBtn').textContent = T.rain; $('resetBtn').textContent = T.reset; $('note').innerHTML = T.note;
+if (!M) { $('loadTxt').textContent = T.missing; throw new Error('unknown model'); }
+$('title').textContent = M.name; $('title').insertAdjacentHTML('beforeend', '<small></small>'); $('title').querySelector('small').textContent = `${q.get('c') || M.country} · ${T.pilot}`; $('credit').textContent = M.credit;
+document.title = `${M.name} · ${T.pilot}`;
+
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches, small = Math.min(innerWidth, innerHeight) < 600;
+const TAU = Math.PI * 2, LOOP = 15, G = 9.81;
+const rnd = (s => () => (s = Math.imul(s ^ (s >>> 15), 2246822507) + 0x9e3779b9 | 0, (s >>> 0) / 4294967295))(11);
+
+// ---------- moods ----------
+const MOODS = {
+  day: { sunEl: 55, sunCol: [1, 0.97, 0.9], sunI: 2.4, hemi: 1.0, env: 0.7, exposure: 0.8, horizon: [0.55, 0.62, 0.7], zenith: [0.16, 0.28, 0.52], glow: [0.2, 0.18, 0.15], fogN: 1500, fogF: 40000, rain: 0.5, lamps: 0.1, windows: 0.1 },
+  golden: { sunEl: 9, sunCol: [1, 0.66, 0.36], sunI: 2.2, hemi: 0.55, env: 0.45, exposure: 0.95, horizon: [0.62, 0.46, 0.32], zenith: [0.14, 0.19, 0.34], glow: [0.9, 0.45, 0.18], fogN: 1200, fogF: 30000, rain: 0.6, lamps: 0.4, windows: 0.5 },
+  dusk: { sunEl: -4, sunCol: [0.6, 0.5, 0.45], sunI: 0, hemi: 0.45, env: 0.32, exposure: 1.05, horizon: [0.13, 0.15, 0.16], zenith: [0.045, 0.055, 0.065], glow: [0.16, 0.1, 0.06], fogN: 600, fogF: 14000, rain: 1, lamps: 1, windows: 1 },
+  night: { sunEl: -20, sunCol: [0.5, 0.55, 0.7], sunI: 0.15, hemi: 0.3, env: 0.3, exposure: 1.2, horizon: [0.04, 0.05, 0.06], zenith: [0.006, 0.009, 0.014], glow: [0.04, 0.025, 0.015], fogN: 800, fogF: 18000, rain: 0.8, lamps: 1, windows: 1.1 },
+};
+// every model opens on a clear day (Jost, 6 Nov 2026); dusk, night and rain are one tap away
+let rainOn = false, mood = MOODS.day; $('rainBtn').setAttribute('aria-pressed', rainOn);
+
+// ---------- renderer, scene, sky ----------
+const canvas = $('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap; renderer.setPixelRatio(Math.min(devicePixelRatio || 1, small ? 1.5 : 1.25));
+const scene = new THREE.Scene(); scene.fog = new THREE.Fog(0x334455, 1500, 40000);   // haze only at long range: the village itself stays clear
+const camera = new THREE.PerspectiveCamera(42, 1, 0.5, 30000);
+const SKY_GLSL = `
+uniform vec3 uHorizon, uZenith, uGlow, uGlowDir;
+vec3 skyCol(vec3 r) {
+  vec3 c = mix(uHorizon, uZenith, smoothstep(-0.02, 0.6, r.y));
+  float az = max(dot(normalize(vec3(r.x, 0.0, r.z) + 1e-5), uGlowDir), 0.0);
+  return c + uGlow * pow(az, 3.0) * exp(-max(r.y, 0.0) * 9.0);
+}`;
+const skyU = { uHorizon: { value: new THREE.Color() }, uZenith: { value: new THREE.Color() }, uGlow: { value: new THREE.Color() }, uGlowDir: { value: new THREE.Vector3(...M.glow).normalize() } };
+const sky = new THREE.Mesh(new THREE.SphereGeometry(20000, 32, 16), new THREE.ShaderMaterial({
+  uniforms: skyU, side: THREE.BackSide, depthWrite: false, fog: false,
+  vertexShader: `varying vec3 vDir; void main(){ vDir = (modelMatrix * vec4(position, 1.0)).xyz - cameraPosition; gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0); gl_Position.z = gl_Position.w * 0.99999; }`,
+  fragmentShader: `${SKY_GLSL} varying vec3 vDir; void main(){ gl_FragColor = vec4(skyCol(normalize(vDir)), 1.0); }`,
+}));
+sky.renderOrder = -1; scene.add(sky);
+const hemi = new THREE.HemisphereLight(0x7d93c4, 0x1c2030, 0.9); scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xffffff, 1); sun.castShadow = true; sun.shadow.mapSize.set(small ? 2048 : 4096, small ? 2048 : 4096);
+Object.assign(sun.shadow.camera, { left: -420, right: 420, top: 420, bottom: -420, near: 10, far: 3000 }); sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.6;
+scene.add(sun, sun.target);
+const sunDir = new THREE.Vector3();
+function placeSun() {   // sun on the glow side at the preset's height; its shadow box follows what is being looked at
+  const el = THREE.MathUtils.degToRad(Math.max(mood.sunEl, 4)), g = skyU.uGlowDir.value;
+  sunDir.set(g.x * Math.cos(el), Math.sin(el), g.z * Math.cos(el)).normalize();
+  sun.target.position.copy(controls ? controls.target : new THREE.Vector3()); sun.position.copy(sun.target.position).addScaledVector(sunDir, 1500);
+}
+
+// ---------- water with planar reflection (glacial green) ----------
+const reflRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
+const reflCam = new THREE.PerspectiveCamera(), texMat = new THREE.Matrix4(), clipUp = [new THREE.Plane(new THREE.Vector3(0, 1, 0), 0.02)];
+const WAVES = [[3, 0.07, 2.9], [4, 0.05, 3.4], [5, 0.04, 2.5], [6, 0.03, 3.7], [7, 0.02, 2.1], [9, 0.01, 3.0]].map(([n, a, ang]) => {
+  const om = TAU * n / LOOP, k = om * om / G; return { om, k, a, dx: Math.sin(ang), dz: Math.cos(ang), ph: rnd() * TAU };
+});
+WAVES.forEach(w => { w.q = Math.min(1, 0.5 / (w.k * w.a * WAVES.length)); });
+const waveH = (x, z, t) => WAVES.reduce((y, w) => y + w.a * Math.sin(w.k * (w.dx * x + w.dz * z) - w.om * t + w.ph), 0);
+const waterU = {
+  uTime: { value: 0 }, uFogD: { value: 0.003 }, uFogN: { value: 1500 }, uFogF: { value: 40000 }, uSunDir: { value: new THREE.Vector3(0, 1, 0) }, uSunCol: { value: new THREE.Color() }, uRain: { value: 1 }, uFogCol: { value: new THREE.Color() }, uDeep: { value: new THREE.Color(...(M.water.colour || [0.03, 0.06, 0.07])) },
+  tRefl: { value: reflRT.texture }, uTexMat: { value: texMat },
+  uWaveA: { value: WAVES.map(w => new THREE.Vector4(w.dx, w.dz, w.k, w.a)) }, uWaveB: { value: WAVES.map(w => new THREE.Vector3(w.om, w.q, w.ph)) }, ...skyU,
+};
+const WATER_VS = `
+uniform float uTime; uniform vec4 uWaveA[6]; uniform vec3 uWaveB[6]; uniform mat4 uTexMat;
+varying vec3 vPos; varying vec2 vBase; varying vec4 vRefl;
+void main(){
+  vec3 w = (modelMatrix * vec4(position, 1.0)).xyz, p = w;
+  for (int i = 0; i < 6; i++) { vec2 D = uWaveA[i].xy; float k = uWaveA[i].z, A = uWaveA[i].w, Q = uWaveB[i].y; float f = k * dot(D, w.xz) - uWaveB[i].x * uTime + uWaveB[i].z;
+    p.x += Q * A * D.x * cos(f); p.z += Q * A * D.y * cos(f); p.y += A * sin(f); }
+  vPos = p; vBase = w.xz; vRefl = uTexMat * vec4(p.x, p.y - (p.y - w.y), p.z, 1.0);
+  gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+}`;
+const WATER_FS = `
+${SKY_GLSL}
+uniform float uTime, uFogD, uFogN, uFogF, uRain; uniform vec3 uFogCol, uDeep, uSunDir, uSunCol; uniform sampler2D tRefl; uniform vec4 uWaveA[6]; uniform vec3 uWaveB[6];
+varying vec3 vPos; varying vec2 vBase; varying vec4 vRefl;
+float hn(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+float vn(vec2 p){ vec2 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f); return mix(mix(hn(i), hn(i + vec2(1.0, 0.0)), u.x), mix(hn(i + vec2(0.0, 1.0)), hn(i + vec2(1.0, 1.0)), u.x), u.y); }
+float chop(vec2 p, float fp){ float h = 0.0, a = 1.0, f = 1.0; for (int o = 0; o < 5; o++) { h += a * vn(p * f) * clamp(1.0 / (f * fp * 4.0) - 1.0, 0.0, 1.0); a *= 0.5; f *= 2.03; p = mat2(0.8, 0.6, -0.6, 0.8) * p + 17.0; } return h; }
+float ripple(vec2 P, float fp){ vec2 v = vec2(0.1, 0.6); float w = uTime / 15.0; return mix(chop(P * 0.9 + v * uTime, fp), chop(P * 0.9 + v * (uTime - 15.0) + 31.0, fp), w); }
+vec2 rippleGrad(vec2 P, float fp){ float e = max(0.05, fp * 0.5), nfp = fp * 0.9, h0 = ripple(P, nfp); return vec2(ripple(P + vec2(e, 0.0), nfp) - h0, ripple(P + vec2(0.0, e), nfp) - h0) / e; }
+vec3 swellN(vec2 b){ vec3 n = vec3(0.0, 1.0, 0.0); for (int i = 0; i < 6; i++) { vec2 D = uWaveA[i].xy; float k = uWaveA[i].z, A = uWaveA[i].w, Q = uWaveB[i].y; float f = k * dot(D, b) - uWaveB[i].x * uTime + uWaveB[i].z; n.x -= D.x * k * A * cos(f); n.z -= D.y * k * A * cos(f); n.y -= Q * k * A * sin(f); } return normalize(n); }
+void main(){
+  vec3 P = vPos, V = normalize(cameraPosition - P); float dist = length(cameraPosition - P);
+  float fp = max(length(dFdx(P.xz)), length(dFdy(P.xz))) + 1e-4;
+  vec2 g = rippleGrad(P.xz, fp) * 0.22;
+  vec2 cell = floor(P.xz / 0.9), lc = fract(P.xz / 0.9) - 0.5;
+  for (int k = 0; k < 2; k++) {
+    vec2 c2 = cell + vec2(float(k) * 17.0, 0.0); float age = fract(uTime * 3.0 / 15.0 + hn(c2 * 1.7));
+    vec2 ctr = vec2(hn(c2 + 3.1), hn(c2 + 7.7)) - 0.5; vec2 dv = lc - ctr * 0.6; float d = length(dv) + 1e-4;
+    float r = age * 0.45, ring = sin((d - r) * 55.0) * exp(-abs(d - r) * 22.0) * (1.0 - age) * step(hn(c2 + 1.3), uRain * 0.55);
+    g += dv / d * ring * 0.35 * clamp(0.08 / fp - 0.5, 0.0, 1.0);
+  }
+  vec3 Ng = swellN(vBase), N = normalize(vec3(Ng.x - g.x, Ng.y, Ng.z - g.y));
+  float F = 0.02 + 0.98 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
+  vec2 ruv = vRefl.xy / vRefl.w + vec2(N.x, N.z) * 0.035 * clamp(dist / 30.0, 0.4, 1.0);
+  vec3 refl = texture2D(tRefl, clamp(ruv, 0.001, 0.999)).rgb;
+  vec3 col = mix(uDeep, refl, clamp(F * 1.15 + 0.12, 0.0, 1.0));
+  col += uSunCol * pow(max(dot(reflect(-V, N), uSunDir), 0.0), 350.0) * 5.0;   // sun glints
+  col = mix(col, uFogCol, smoothstep(uFogN, uFogF, dist));
+  gl_FragColor = vec4(col, 1.0);
+}`;
+const waterMat = new THREE.ShaderMaterial({ uniforms: waterU, vertexShader: WATER_VS, fragmentShader: WATER_FS, fog: false });
+// water plane over the model's core area at its level (sea 0, lake surface); none for inland villages
+const WE = M.water.extent, WL = M.water.level || 0, HAS_WATER = M.water.mode !== 'none';
+const water = new THREE.Mesh(new THREE.PlaneGeometry(WE[2] - WE[0], WE[3] - WE[1], small ? 200 : 360, small ? 200 : 360).rotateX(-Math.PI / 2).translate((WE[0] + WE[2]) / 2, WL, -(WE[1] + WE[3]) / 2), waterMat);
+water.visible = HAS_WATER; scene.add(water);
+const farMat = waterMat.clone(); farMat.uniforms = { ...waterU, uWaveA: { value: WAVES.map(w => new THREE.Vector4(w.dx, w.dz, w.k, 0)) } };
+if (M.water.mode === 'sea') scene.add(new THREE.Mesh(new THREE.PlaneGeometry(140000, 140000, 80, 80).rotateX(-Math.PI / 2).translate(0, -0.25, 0), farMat));
+
+// ---------- rain ----------
+const RN = small ? 12000 : 26000, rg = new THREE.BufferGeometry(), rp = new Float32Array(RN * 3), rs = new Float32Array(RN);
+for (let i = 0; i < RN; i++) { rp[i * 3] = (rnd() - 0.5) * 240; rp[i * 3 + 1] = rnd() * 80; rp[i * 3 + 2] = (rnd() - 0.5) * 240; rs[i] = rnd(); }
+rg.setAttribute('position', new THREE.BufferAttribute(rp, 3)); rg.setAttribute('aSeed', new THREE.BufferAttribute(rs, 1));
+const rainU = { uTime: { value: 0 }, uScale: { value: 800 }, uAmt: { value: 1 }, uFogN: { value: 600 }, uFogF: { value: 14000 } };
+const rain = new THREE.Points(rg, new THREE.ShaderMaterial({
+  uniforms: rainU, transparent: true, depthWrite: false, fog: false, blending: THREE.AdditiveBlending,
+  vertexShader: `uniform float uTime, uScale, uAmt; attribute float aSeed; varying float vA, vD;
+  void main(){ vec3 p = position; float band = 20.0; p.y = floor(position.y / band) * band + mod(position.y - uTime * band * 5.0 / 15.0, band); p.x += p.y * 0.06;
+    vec4 mv = modelViewMatrix * vec4(p, 1.0); float size = 0.55 * uScale / -mv.z;
+    vA = step(aSeed, 0.5 * uAmt) * clamp(size / 6.0, 0.0, 1.0) * smoothstep(1.0, 4.0, -mv.z); vD = -mv.z;
+    gl_PointSize = clamp(size, 1.0, 40.0); gl_Position = projectionMatrix * mv; }`,
+  fragmentShader: `uniform float uFogN, uFogF; varying float vA, vD;
+  void main(){ vec2 q = gl_PointCoord - 0.5; float a = smoothstep(0.035, 0.0, abs(q.x + q.y * 0.06)) * smoothstep(0.5, 0.2, abs(q.y)) * vA; if (a < 0.004) discard;
+    gl_FragColor = vec4(vec3(0.55, 0.6, 0.65) * a * 0.5 * (1.0 - smoothstep(uFogN, uFogF, vD)), 1.0); }`,
+}));
+rain.frustumCulled = false; scene.add(rain);
+
+// ---------- chimney smoke ----------
+function puffTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d');
+  const g = x.createRadialGradient(32, 32, 0, 32, 32, 32); g.addColorStop(0, 'rgba(255,255,255,0.55)'); g.addColorStop(0.6, 'rgba(255,255,255,0.18)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c);
+}
+const puffTex = puffTexture(), smokes = [], lamps = [], glass = new Map();
+
+// ---------- model ----------
+const loader = new GLTFLoader().setDRACOLoader(new DRACOLoader().setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/draco/gltf/'));
+let rowboats = [];
+m3dGet(M.file, 'buf').then(buf => loader.parse(buf, '', g => {
+  const v = g.scene; scene.add(v);
+  v.traverse(o => {
+    if (/^lamp_/.test(o.name) && lamps.length < (small ? 6 : 12)) { const l = new THREE.PointLight(0xffb36b, 45, 30, 2); o.add(l); lamps.push(l); }
+    if (o.isMesh) { o.castShadow = !/^terrain/.test(o.name); o.receiveShadow = true; }
+    if (/^rowboat_/.test(o.name)) rowboats.push({ o, x: o.position.x, z: o.position.z, ry: o.rotation.y, ph: rnd() * TAU });
+    if (o.isMesh && o.material && /^glass_(lit|dim)/.test(o.material.name) && !glass.has(o.material)) glass.set(o.material, o.material.emissiveIntensity);
+  });
+  v.updateMatrixWorld(true);
+  v.traverse(o => {
+    if (/^smoke_/.test(o.name) && smokes.length < (small ? 90 : 300)) {
+      const base = new THREE.Vector3(); o.getWorldPosition(base);
+      for (let i = 0; i < 6; i++) { const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTex, color: 0x9aa4b4, transparent: true, depthWrite: false, opacity: 0 })); s.userData = { base, k: i / 6, ph: rnd() }; smokes.push(s); scene.add(s); }
+    }
+  });
+  applyMood(); $('load').hidden = true; initPois(v);
+}, () => { $('loadTxt').textContent = T.fail; })).catch(() => { $('loadTxt').textContent = T.fail; });
+
+// ---------- post ----------
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: small ? 0 : 4 }));
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.6, 0.5, 0.85); composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+// ---------- moods and controls ----------
+const pmrem = new THREE.PMREMGenerator(renderer);
+function applyMood() {
+  skyU.uHorizon.value.setRGB(...mood.horizon); skyU.uZenith.value.setRGB(...mood.zenith); skyU.uGlow.value.setRGB(...mood.glow);
+  const fc = new THREE.Color(...mood.horizon).multiplyScalar(0.85);
+  scene.fog.color.copy(fc); scene.fog.near = mood.fogN; scene.fog.far = mood.fogF; waterU.uFogN.value = rainU.uFogN.value = mood.fogN; waterU.uFogF.value = rainU.uFogF.value = mood.fogF; waterU.uFogCol.value.copy(fc);
+  sun.color.setRGB(...mood.sunCol); sun.intensity = mood.sunEl > 0 ? mood.sunI : 0; placeSun(); waterU.uSunDir.value.copy(sunDir); waterU.uSunCol.value.setRGB(...mood.sunCol).multiplyScalar(mood.sunEl > 0 ? mood.sunI : 0);
+  hemi.intensity = mood.hemi; scene.environmentIntensity = mood.env; renderer.toneMappingExposure = mood.exposure;
+  const r = rainOn ? mood.rain : 0; rainU.uAmt.value = r; waterU.uRain.value = r; rain.visible = r > 0;
+  for (const l of lamps) l.intensity = 45 * mood.lamps;
+  for (const [m, base] of glass) m.emissiveIntensity = base * mood.windows;   // lit windows fade by day
+  const s = new THREE.Scene(); s.add(sky.clone()); if (scene.environment) scene.environment.dispose(); scene.environment = pmrem.fromScene(s, 0, 1, 30000).texture;
+}
+const moodsEl = $('moods');
+for (const k of ['day', 'golden', 'dusk', 'night']) {
+  const b = document.createElement('button'); b.textContent = T[k]; b.setAttribute('aria-pressed', MOODS[k] === mood);
+  b.onclick = () => { mood = MOODS[k]; [...moodsEl.children].forEach(x => x.setAttribute('aria-pressed', x === b)); applyMood(); };
+  moodsEl.appendChild(b);
+}
+$('rainBtn').onclick = e => { rainOn = !rainOn; e.target.setAttribute('aria-pressed', rainOn); applyMood(); };
+const controls = new OrbitControls(camera, canvas);
+Object.assign(controls, { enableDamping: true, dampingFactor: 0.08, minDistance: 25, maxDistance: 2500, maxPolarAngle: Math.PI * 0.47, autoRotate: !reduceMotion, autoRotateSpeed: 0.35 });
+const WX = M.water.extent, CORE_SIZE = Math.min(WX[2] - WX[0], WX[3] - WX[1]);
+controls.maxDistance = Math.min(2500, Math.max(400, CORE_SIZE * 0.45));
+controls.addEventListener('change', () => { const t = controls.target, m = 150;
+  t.x = Math.min(WX[2] - m, Math.max(WX[0] + m, t.x)); t.z = Math.min(-WX[1] - m, Math.max(-WX[3] + m, t.z)); });
+function resetView() { camera.position.set(...M.cam); controls.target.set(...M.target); controls.update(); }
+$('resetBtn').onclick = resetView;
+controls.addEventListener('start', () => { controls.autoRotate = false; });
+addEventListener('keydown', e => { if (e.key === 'Escape' && parent !== window) parent.postMessage({ type: 'm3d-close' }, '*'); });
+
+// ---------- points of interest and guided tour (7 Nov 2026) ----------
+// <slug>.pois.json from tools/model3d/build_pois.py: named OpenStreetMap places and tour stops; practices come from the card
+// that opened the viewer (window.parent.m3dHost, same page), so only practices the Explorer shows appear.
+const MAJOR = new Set(['castle', 'gate', 'church', 'aqueduct', 'museum', 'bookshop', 'town']);
+const KCOL = { castle: '#d8b46a', gate: '#d8b46a', tower: '#b59a6a', church: '#e6e1d6', chapel: '#cfc8b8', aqueduct: '#9fb8c8', museum: '#9fd0b0', bookshop: '#e7a0b8', library: '#e7a0b8', pillory: '#bbb', viewpoint: '#8fc1f0', attraction: '#bbb' };
+let POI = null, poiOn = true, tourI = -1, fly = null, poiEls = [], ground = [], occT = 0;
+const host = (() => { try { return parent !== window && parent.m3dHost ? parent.m3dHost : null; } catch (e) { return null; } })();
+const hostPrac = () => { try { return host ? host.practices(M.btv) : []; } catch (e) { return []; } };
+// heights from the terrain grids, read once (7 Nov 2026: a ray against the whole model took about 170 ms, 1.6 million triangles,
+// and the label check cast up to 32 of them every twelfth frame, which froze the view); finest grid first, bilinear within a cell
+const HF = [];
+function buildHeights(root) {
+  const ts = []; root.traverse(o => { if (o.isMesh && /^terrain/.test(o.name)) ts.push(o); });
+  for (const o of ts) {
+    const pa = o.geometry.attributes.position, n = Math.round(Math.sqrt(pa.count)); o.geometry.computeBoundingBox(); const b = o.geometry.boundingBox;
+    const x0 = b.min.x, z0 = b.min.z, st = (b.max.x - b.min.x) / (n - 1), nx = n, nz = Math.round((b.max.z - b.min.z) / st) + 1, h = new Float32Array(nx * nz).fill(NaN);
+    for (let i = 0; i < pa.count; i++) {
+      const fx = (pa.getX(i) - x0) / st, fz = (pa.getZ(i) - z0) / st, ix = Math.round(fx), iz = Math.round(fz);
+      if (Math.abs(fx - ix) < 0.02 && Math.abs(fz - iz) < 0.02 && ix >= 0 && iz >= 0 && ix < nx && iz < nz) h[iz * nx + ix] = pa.getY(i);
+    }
+    HF.push({ x0, z0, st, nx, nz, h });
+  }
+  HF.sort((a, b) => a.st - b.st);
+}
+function groundAt(x, z) {
+  for (const g of HF) {
+    const fx = (x - g.x0) / g.st, fz = (z - g.z0) / g.st, ix = Math.floor(fx), iz = Math.floor(fz);
+    if (ix < 0 || iz < 0 || ix >= g.nx - 1 || iz >= g.nz - 1) continue;
+    const a = g.h[iz * g.nx + ix], b = g.h[iz * g.nx + ix + 1], c = g.h[(iz + 1) * g.nx + ix], d = g.h[(iz + 1) * g.nx + ix + 1];
+    if (a !== a || b !== b || c !== c || d !== d) continue;   // a hole (the far grid under the core): try the next grid
+    const u = fx - ix, w = fz - iz; return (a * (1 - u) + b * u) * (1 - w) + (c * (1 - u) + d * u) * w;
+  }
+  return 0;
+}
+function hidden(from, to) {   // a hill between the camera and a point: sampled along the line on the height map
+  const d = from.distanceTo(to), n = Math.min(40, Math.max(8, Math.round(d / 25)));
+  for (let i = 1; i < n; i++) { const k = i / n, x = from.x + (to.x - from.x) * k, y = from.y + (to.y - from.y) * k, z = from.z + (to.z - from.z) * k; if (y < groundAt(x, z) - 1) return true; }
+  return false;
+}
+const esc3 = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+async function initPois(root) {
+  POI = await m3dGet(`${SLUG}.pois.json`, 'json').catch(() => null);
+  if (!POI || !POI.pois) { if (window.m3dFilm) m3dFilm.ready = true; return; }
+  buildHeights(root);
+  const box = $('pois');
+  for (const p of POI.pois) {
+    p.pos = new THREE.Vector3(p.x, groundAt(p.x, -p.y) + (MAJOR.has(p.kind) ? 14 : 8), -p.y);
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'poi' + (MAJOR.has(p.kind) ? '' : ' minor');
+    b.style.setProperty('--k', KCOL[p.kind] || '#ccc'); b.innerHTML = `<span>${esc3(p.name)}</span><i></i>`; b.title = `${p.name} · ${PT.kind[p.kind] || ''}`;
+    b.onclick = () => showPlace(p); box.appendChild(b); poiEls.push([p, b]);
+  }
+  for (const s of POI.tour || []) s.pos = new THREE.Vector3(s.x, groundAt(s.x, -s.y), -s.y);
+  $('poiGrp').hidden = false; $('poiBtn').textContent = PT.places;
+  $('poiBtn').onclick = e => { poiOn = !poiOn; e.currentTarget.setAttribute('aria-pressed', poiOn); box.hidden = !poiOn; };
+  if (window.m3dFilm) m3dFilm.ready = true;
+  if ((POI.tour || []).length) { const t = $('tourBtn'); t.hidden = false; t.textContent = PT.tour; t.onclick = () => tourGo(0); }
+}
+function pracHTML(ids) {
+  const all = hostPrac(), list = ids && ids.length ? all.filter(p => ids.includes(p.id)) : [];
+  if (!list.length) return '';
+  return `<p class="k" style="margin-top:10px">${esc3(PT.practices)}</p>` + list.map(p => `<button type="button" class="pr" data-id="${p.id}" style="--g:${p.col}">${esc3(p.title)}<small>${esc3(PT.grade[p.strength] || '')} · ${esc3(PT.open)} ↗</small></button>`).join('');
+}
+function bindPanel() {
+  const P = $('panel');
+  P.querySelectorAll('.pr').forEach(b => b.onclick = () => { parent.postMessage({ type: 'm3d-practice', id: +b.dataset.id }, '*'); });
+  const x = P.querySelector('.x'); if (x) x.onclick = () => { P.hidden = true; tourI = -1; poiEls.forEach(([, b]) => b.classList.remove('sel')); };
+  const pv = P.querySelector('[data-go=prev]'), nx = P.querySelector('[data-go=next]');
+  if (pv) pv.onclick = () => tourGo(tourI - 1);
+  if (nx) nx.onclick = () => { if (tourI < POI.tour.length - 1) tourGo(tourI + 1); else { P.hidden = true; tourI = -1; } };
+}
+// Wikipedia summary fetched live (7 Nov 2026): the page stores only the article titles; text, licence line and link come with each view.
+// Only an article in the interface language is quoted (first two sentences, at most about 420 characters); where Wikipedia has the
+// place only in other languages, the panel links to those articles instead of showing their text (Jost, 7 Nov 2026).
+const wikiCache = new Map();
+function wikiBlock(p) {
+  if (!p || !p.wd) return '';
+  const d = p.desc ? (p.desc[LANG] || '') : '';   // interface language only (Jost, 7 Nov 2026: no text in another language)
+  return (d ? `<div class="wd">${esc3(d)}</div>` : '') + `<div class="wk" data-wk="${esc3(p.name)}" hidden></div>`;
+}
+async function wikiFill(p) {
+  const box = $('panel').querySelector('.wk'); if (!box || !p || !p.wiki) return;
+  const url = l => `https://${l}.wikipedia.org/wiki/${encodeURIComponent(p.wiki[l].replace(/ /g, '_'))}`;
+  const links = () => { const ks = Object.keys(p.wiki).filter(l => l !== LANG), o = ks.includes('en') ? ['en'] : ks.slice(-1); if (!o.length || box.dataset.wk !== p.name) return;   // one link: English, else the local article
+    box.innerHTML = `<small>${o.map(l => `<a href="${url(l)}" target="_blank" rel="noopener">${esc3(fmt(PT.wikiOther, PT.langs[l] || l))} ↗</a>`).join(' · ')}</small>`; box.hidden = false; };
+  const order = p.wiki[LANG] ? [LANG] : [];
+  if (!order.length) return links();
+  for (const l of order) {
+    const key = l + ':' + p.wiki[l];
+    let j = wikiCache.get(key);
+    if (j === undefined) { j = await fetch(`https://${l}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(p.wiki[l].replace(/ /g, '_'))}`).then(r => r.ok ? r.json() : null).catch(() => null); wikiCache.set(key, j); }
+    if (!j || !j.extract || j.type === 'disambiguation') continue;
+    if (box.dataset.wk !== p.name || !box.isConnected) return;   // the panel moved on meanwhile
+    let t = j.extract.replace(/\s+/g, ' ').trim(); const sent = t.match(/[^.!?。]+[.!?。]+(\s|$)/g) || [t]; t = sent.slice(0, 2).join('').trim();
+    if (t.length > 420) t = t.slice(0, 410).replace(/\s\S*$/, '') + ' …';
+    box.innerHTML = `<p lang="${l}" dir="auto">${esc3(t)}</p><small>${esc3(PT.wiki)} · ${esc3(PT.lic)} · <a href="${url(l)}" target="_blank" rel="noopener">${esc3(PT.read)} ↗</a></small>`;
+    box.hidden = false; return;
+  }
+  links();   // the article could not be read: offer the links
+}
+const poiByName = n => POI && POI.pois.find(p => p.name === n);
+function showPlace(p) {
+  tourI = -1; poiEls.forEach(([q, b]) => b.classList.toggle('sel', q === p));
+  const P = $('panel'); P.hidden = false;
+  P.innerHTML = `<button type="button" class="x" aria-label="${esc3(PT.close)}">✕</button><div class="k">${esc3(PT.kind[p.kind] || '')}</div><h2>${esc3(p.name)}</h2>${wikiBlock(p)}<div class="src">${esc3(PT.src)}${p.desc && p.desc[LANG] ? ' ' + esc3(PT.wdsrc) + '.' : ''}</div>`;
+  bindPanel(); wikiFill(p); flyTo(p.pos.clone().setY(p.pos.y - 8), null);
+}
+function facts(s) {
+  const c = POI.counts || {}, out = [];
+  for (const f of s.facts || []) {
+    if (f === 'walls' && c.walls_m) out.push(fmt(PT.walls, (c.walls_m / 1000).toLocaleString(LANG, { maximumFractionDigits: 1 })));
+    if (f === 'towers' && c.towers) out.push(fmt(PT.towers, c.towers));
+    if (f === 'stay' && (c.stay || c.eat)) out.push(fmt(PT.stay, c.stay || 0, c.eat || 0));
+  }
+  return out.map(t => `<p>${esc3(t)}</p>`).join('');
+}
+function tourGo(i) {
+  const T_ = POI.tour; if (i < 0 || i >= T_.length) return; tourI = i; const s = T_[i];
+  poiEls.forEach(([q, b]) => b.classList.toggle('sel', q.name === s.name));
+  const P = $('panel'); P.hidden = false;
+  P.innerHTML = `<button type="button" class="x" aria-label="${esc3(PT.close)}">✕</button><div class="k">${esc3(fmt(PT.stop, i + 1, T_.length))} · ${esc3(PT.kind[s.kind] || '')}</div><h2>${esc3(s.name)}</h2>${wikiBlock(poiByName(s.name))}${facts(s)}${pracHTML(s.practices)}
+    <div class="nav"><button type="button" data-go="prev" ${i ? '' : 'disabled'}>${esc3(PT.prev)}</button><button type="button" data-go="next">${esc3(i < T_.length - 1 ? PT.next : PT.end)}</button></div><div class="src">${esc3(PT.src)}${((poiByName(s.name) || {}).desc || {})[LANG] ? ' ' + esc3(PT.wdsrc) + '.' : ''}</div>`;
+  bindPanel(); wikiFill(poiByName(s.name));
+  const tgt = s.pos.clone().setY(s.pos.y + 6), cam = new THREE.Vector3(s.cam[0], groundAt(s.cam[0], -s.cam[2]) + s.cam[1], -s.cam[2]);
+  flyTo(tgt, cam);
+}
+function flyTo(tgt, cam) {   // eased move of target and camera; a drag stops it
+  controls.autoRotate = false;
+  const t0_ = controls.target.clone(), c0 = camera.position.clone();
+  const c1 = cam || c0.clone().sub(t0_).setLength(Math.min(260, c0.distanceTo(t0_))).add(tgt);
+  if (reduceMotion) { controls.target.copy(tgt); camera.position.copy(c1); return; }
+  fly = { t0_, c0, tgt, c1, s: performance.now(), d: 2200 };
+}
+controls.addEventListener('start', () => { fly = null; });
+function updatePois() {
+  if (fly) {
+    const k = Math.min(1, (performance.now() - fly.s) / fly.d), e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+    controls.target.lerpVectors(fly.t0_, fly.tgt, e); camera.position.lerpVectors(fly.c0, fly.c1, e);
+    if (k >= 1) fly = null;
+  }
+  if (!poiOn || !poiEls.length) return;
+  const w = innerWidth, h = innerHeight, v = new THREE.Vector3(), occ = (++occT % 12) === 0, placed = [];
+  for (const [p, b] of poiEls) {   // in rank order (build_pois.py sorts castles, gates and churches first): a label that would overlap one already placed waits
+    v.copy(p.pos).project(camera); const d = camera.position.distanceTo(p.pos);
+    const near = MAJOR.has(p.kind) ? d < 1600 : d < 420;
+    let show = v.z < 1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.05 && near;
+    if (show && occ) {   // hidden behind a hill or a building: checked every few frames
+      b.dataset.occ = hidden(camera.position, p.pos) ? '1' : '';
+    }
+    show = show && (!b.dataset.occ || b.classList.contains('sel'));
+    const sx = (v.x + 1) / 2 * w, sy = (1 - v.y) / 2 * h;
+    if (show) {
+      const bw = b._w || (b._w = Math.min(230, p.name.length * 6.6 + 20)), r = [sx - bw / 2 - 3, sy - 38, sx + bw / 2 + 3, sy - 14];
+      if (!b.classList.contains('sel') && placed.some(q => r[0] < q[2] && r[2] > q[0] && r[1] < q[3] && r[3] > q[1])) show = false; else placed.push(r);
+    }
+    b.style.display = show ? '' : 'none';
+    if (show) b.style.transform = `translate(${sx}px, ${sy}px) translate(-50%, -100%)`;
+  }
+}
+
+// ---------- film mode (7 Nov 2026): viewer.html?m=<slug>&film=1 for tools/model3d/film.mjs ----------
+// No controls; the camera follows the tour stops listed in pois.json "film" (default: all stops) on a smooth curve, each stop
+// named in a caption as the camera passes it; the illustrative-model label and the credits stay on every frame.
+// The recorder calls m3dFilm.renderAt(seconds) once per frame, so motion does not depend on how fast the machine renders.
+const FILM = q.has('film');
+let filmPath = null;
+if (FILM) {
+  document.body.classList.add('film');
+  const st = document.createElement('style');
+  st.textContent = `body.film #top, body.film #bottom, body.film #pois, body.film #panel { display: none !important; }
+    #filmUI { position: absolute; inset: 0; pointer-events: none; font-family: system-ui, "Segoe UI", sans-serif; }
+    #filmUI::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 34%; background: linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0)); }
+    #filmUI .cap { position: absolute; left: 5%; bottom: 13%; color: #fff; text-shadow: 0 2px 10px rgba(0,0,0,.65); transition: none; }
+    #filmUI .cap b { display: block; font-size: calc(min(100vw, 100vh) * 0.06); font-weight: 650; letter-spacing: .01em; }
+    #filmUI .cap span { display: block; font-size: calc(min(100vw, 100vh) * 0.028); opacity: .9; }
+    #filmUI .lab { position: absolute; left: 5%; right: 5%; bottom: 4.5%; color: rgba(255,255,255,.88); font-size: calc(min(100vw, 100vh) * 0.019); text-shadow: 0 1px 4px rgba(0,0,0,.8); }
+    #filmUI .lab b { color: #fff; }`;
+  document.head.appendChild(st);
+  const ui = document.createElement('div'); ui.id = 'filmUI';
+  ui.innerHTML = `<div class="cap" id="filmCap"><b></b><span></span></div><div class="lab"><b>${esc3((T.note.match(/<b>(.*?)<\/b>/) || [0, ''])[1].replace(/\.$/, ''))}</b> · ${esc3(M.credit)}</div>`;
+  document.body.appendChild(ui);
+}
+function filmBuild() {   // camera and target curves through the chosen stops; vertical frames sit a little further back
+  const T_ = (POI && POI.tour) || [], pick = (POI && POI.film && POI.film.stops) || T_.map((_, i) => i), back = innerHeight > innerWidth ? 1.35 : 1.0;
+  const keys = pick.map(i => T_[i]).filter(Boolean).map(s => {
+    const tgt = s.pos.clone().setY(s.pos.y + 6), cam = new THREE.Vector3(s.cam[0], groundAt(s.cam[0], -s.cam[2]) + s.cam[1], -s.cam[2]);
+    return { s, tgt, cam: tgt.clone().add(cam.clone().sub(tgt).multiplyScalar(back)) };
+  });
+  if (keys.length < 2) return null;
+  // a slow push-in before the first stop and a rise after the last one
+  const k0 = keys[0], kN = keys[keys.length - 1];
+  const pre = { tgt: k0.tgt.clone(), cam: k0.tgt.clone().add(k0.cam.clone().sub(k0.tgt).multiplyScalar(1.25)) };
+  const post = { tgt: kN.tgt.clone(), cam: kN.tgt.clone().add(kN.cam.clone().sub(kN.tgt).multiplyScalar(1.3)).add(new THREE.Vector3(0, 40, 0)) };
+  const all = [pre, ...keys, post];
+  return { keys, n: all.length, dur: (POI.film && POI.film.seconds) || 14,
+    cam: new THREE.CatmullRomCurve3(all.map(k => k.cam), false, 'centripetal'), tgt: new THREE.CatmullRomCurve3(all.map(k => k.tgt), false, 'centripetal') };
+}
+const ease = x => x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
+window.m3dFilm = {
+  ready: false,
+  info() { return filmPath ? { seconds: filmPath.dur, stops: filmPath.keys.map(k => k.s.name) } : null; },
+  stopTime(k) {   // the second at which the flight passes stop k (curve point k + 1), found by bisection through the easing
+    if (!filmPath) filmPath = filmBuild(); if (!filmPath) return null;
+    const u = (k + 1) / (filmPath.n - 1); let lo = 0, hi = filmPath.dur;
+    for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (ease(m / filmPath.dur) < u) lo = m; else hi = m; }
+    return (lo + hi) / 2;
+  },
+  renderAt(sec) {
+    if (!filmPath) filmPath = filmBuild();
+    if (!filmPath) return false;
+    const u = ease(Math.min(1, Math.max(0, sec / filmPath.dur)));
+    camera.position.copy(filmPath.cam.getPoint(u)); controls.target.copy(filmPath.tgt.getPoint(u)); camera.lookAt(controls.target);
+    // caption: the stop the curve is passing (curve points 1..n-2 are the stops), faded in and out around it
+    const pos = u * (filmPath.n - 1), k = Math.round(pos) - 1, near = 1 - Math.min(1, Math.abs(pos - Math.round(pos)) * 2.2);
+    const cap = document.getElementById('filmCap'), stop = filmPath.keys[Math.max(0, Math.min(filmPath.keys.length - 1, k))];
+    const on = k >= 0 && k < filmPath.keys.length;
+    cap.querySelector('b').textContent = stop.s.name; cap.querySelector('span').textContent = k === 0 ? (q.get('c') || M.country) : (PT.kind[stop.s.kind] || '');
+    cap.style.opacity = on ? Math.max(0, Math.min(1, near * 1.6)).toFixed(3) : 0;
+    frameAt(sec);
+    return true;
+  },
+};
+
+// ---------- loop ----------
+const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
+function resize() {
+  const w = innerWidth, h = innerHeight; renderer.setSize(w, h, false); composer.setSize(w, h); bloom.resolution.set(w, h);
+  const pr = renderer.getPixelRatio(); reflRT.setSize(Math.round(w * pr / (small ? 3 : 2)), Math.round(h * pr / (small ? 3 : 2)));
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+function renderReflection() {
+  camera.updateMatrixWorld();
+  if (!HAS_WATER) return;
+  reflCam.position.set(camera.position.x, 2 * WL - camera.position.y, camera.position.z);
+  camera.getWorldDirection(tmp); tmp2.copy(camera.position).add(tmp); tmp2.y = 2 * WL - tmp2.y;
+  reflCam.up.set(0, 1, 0).applyQuaternion(camera.quaternion); reflCam.up.y = -reflCam.up.y;
+  reflCam.lookAt(tmp2); reflCam.far = camera.far; reflCam.near = camera.near; reflCam.updateMatrixWorld(); reflCam.projectionMatrix.copy(camera.projectionMatrix);
+  texMat.set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1).multiply(reflCam.projectionMatrix).multiply(reflCam.matrixWorldInverse);
+  clipUp[0].constant = -WL + 0.02;
+  water.visible = false; rain.visible = false; sky.position.copy(reflCam.position);
+  renderer.clippingPlanes = clipUp; renderer.setRenderTarget(reflRT); renderer.clear(); renderer.render(scene, reflCam);
+  renderer.setRenderTarget(null); renderer.clippingPlanes = []; water.visible = true; rain.visible = rainU.uAmt.value > 0;
+}
+const t0 = performance.now();
+// automatic quality (7 Nov 2026): on a slow machine (integrated graphics on a high-density screen) the first seconds after the
+// model appears are timed; above about 40 frames a second nothing changes, below it the viewer steps down once or twice.
+// ?q=low starts at the lowest step, ?q=high never steps down.
+let qLevel = 0, qTimes = [], qLast = 0, qDone = false;
+function setQuality(l) {
+  qLevel = l;
+  if (l >= 1) {
+    renderer.setPixelRatio(1); bloom.enabled = false;
+    for (const rt of [composer.renderTarget1, composer.renderTarget2]) { rt.samples = 0; rt.dispose(); }
+    sun.shadow.mapSize.set(2048, 2048); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+  }
+  if (l >= 2) { renderer.setPixelRatio(0.75); renderer.shadowMap.type = THREE.PCFShadowMap; scene.traverse(o => { if (o.isMesh && o.castShadow && !/^(townwall|tower|landmark|belfry)/.test(o.name)) o.castShadow = false; }); }
+  resize();
+}
+function qualityCheck(now) {
+  if (FILM || qDone || qLevel >= 2 || q.get('q') === 'high' || !$('load').hidden) return;
+  if (qLast) qTimes.push(now - qLast); qLast = now;
+  if (qTimes.length >= 75) { const s_ = qTimes.slice(15).sort((a, b) => a - b), med = s_[s_.length >> 1]; qTimes = []; if (med > 25) setQuality(qLevel + 1); else qDone = true; }
+}
+function frame() { const now = performance.now(); qualityCheck(now); frameAt((now - t0) / 1000); if (!FILM) requestAnimationFrame(frame); }
+function frameAt(sec) {
+  const t = sec % LOOP;
+  if (!FILM) controls.update();
+  waterU.uTime.value = rainU.uTime.value = t;
+  rain.position.set(controls.target.x, 0, controls.target.z);   // the rain volume follows what is being looked at
+  rainU.uScale.value = renderer.domElement.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
+  for (const r of rowboats) { const h = waveH(r.x, r.z, t); r.o.position.y = h * 0.9 + 0.02; r.o.rotation.z = Math.sin(TAU * t / LOOP * 2 + r.ph) * 0.04; }
+  for (const s of smokes) {
+    const d = s.userData, ph = ((2 * t / LOOP + d.k + d.ph * 0.07) % 1 + 1) % 1;
+    s.position.set(d.base.x + ph * 3.5, d.base.y + ph * 9, d.base.z - ph * 1.2); const sc = 0.7 + ph * 3.2; s.scale.set(sc, sc, sc);
+    s.material.opacity = Math.sin(Math.PI * Math.min(1, ph * 1.2)) * 0.42 * (1 - ph * 0.5);
+  }
+  updatePois(); placeSun(); renderReflection(); sky.position.copy(camera.position);
+  composer.render();
+}
+resize(); applyMood(); resetView(); if (FILM) controls.autoRotate = false; if (q.get('q') === 'low') setQuality(2); requestAnimationFrame(frame);
+window.m3dQuality = () => qLevel;
+window.m3d = { camera, controls, renderer, scene };
+</script>
+</body>
+</html>
