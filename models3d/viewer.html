@@ -122,7 +122,9 @@ async function m3dGet(name, type) {   // plain file locally; online the encrypte
   if (r && r.ok) return type === 'json' ? r.json() : r.arrayBuffer();
   const k = sessionStorage.getItem('btv-m3d'); if (!k) throw new Error('locked');
   const key = await crypto.subtle.importKey('raw', Uint8Array.from(atob(k), c => c.charCodeAt(0)), 'AES-GCM', false, ['decrypt']);
-  const e = new Uint8Array(await (await fetch(name + '.enc')).arrayBuffer());
+  // online the encrypted copies live in their own repository on the same origin (7 Nov 2026, weight)
+  const base = /\.github\.io$/.test(location.hostname) ? '/btv-explorer-models/' : '';
+  const e = new Uint8Array(await (await fetch(base + name + '.enc')).arrayBuffer());
   const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: e.slice(0, 12) }, key, e.slice(12));
   return type === 'json' ? JSON.parse(new TextDecoder().decode(plain)) : plain;
 }
