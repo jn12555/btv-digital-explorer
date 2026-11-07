@@ -534,7 +534,26 @@ function renderReflection() {
   renderer.setRenderTarget(null); renderer.clippingPlanes = []; water.visible = true; rain.visible = rainU.uAmt.value > 0;
 }
 const t0 = performance.now();
-function frame() { frameAt((performance.now() - t0) / 1000); if (!FILM) requestAnimationFrame(frame); }
+// automatic quality (7 Nov 2026): on a slow machine (integrated graphics on a high-density screen) the first seconds after the
+// model appears are timed; above about 40 frames a second nothing changes, below it the viewer steps down once or twice.
+// ?q=low starts at the lowest step, ?q=high never steps down.
+let qLevel = 0, qTimes = [], qLast = 0, qDone = false;
+function setQuality(l) {
+  qLevel = l;
+  if (l >= 1) {
+    renderer.setPixelRatio(1); bloom.enabled = false;
+    for (const rt of [composer.renderTarget1, composer.renderTarget2]) { rt.samples = 0; rt.dispose(); }
+    sun.shadow.mapSize.set(2048, 2048); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+  }
+  if (l >= 2) { renderer.setPixelRatio(0.75); renderer.shadowMap.type = THREE.PCFShadowMap; scene.traverse(o => { if (o.isMesh && o.castShadow && !/^(townwall|tower|landmark|belfry)/.test(o.name)) o.castShadow = false; }); }
+  resize();
+}
+function qualityCheck(now) {
+  if (FILM || qDone || qLevel >= 2 || q.get('q') === 'high' || !$('load').hidden) return;
+  if (qLast) qTimes.push(now - qLast); qLast = now;
+  if (qTimes.length >= 75) { const s_ = qTimes.slice(15).sort((a, b) => a - b), med = s_[s_.length >> 1]; qTimes = []; if (med > 25) setQuality(qLevel + 1); else qDone = true; }
+}
+function frame() { const now = performance.now(); qualityCheck(now); frameAt((now - t0) / 1000); if (!FILM) requestAnimationFrame(frame); }
 function frameAt(sec) {
   const t = sec % LOOP;
   if (!FILM) controls.update();
@@ -550,7 +569,8 @@ function frameAt(sec) {
   updatePois(); placeSun(); renderReflection(); sky.position.copy(camera.position);
   composer.render();
 }
-resize(); applyMood(); resetView(); if (FILM) controls.autoRotate = false; requestAnimationFrame(frame);
+resize(); applyMood(); resetView(); if (FILM) controls.autoRotate = false; if (q.get('q') === 'low') setQuality(2); requestAnimationFrame(frame);
+window.m3dQuality = () => qLevel;
 window.m3d = { camera, controls, renderer, scene };
 </script>
 </body>
