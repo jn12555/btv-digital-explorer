@@ -341,19 +341,22 @@ const HF = [];
 function buildHeights(root) {
   const ts = []; root.traverse(o => { if (o.isMesh && /^terrain/.test(o.name)) ts.push(o); });
   for (const o of ts) {
-    const pa = o.geometry.attributes.position, n = Math.round(Math.sqrt(pa.count)); o.geometry.computeBoundingBox(); const b = o.geometry.boundingBox;
-    const x0 = b.min.x, z0 = b.min.z, st = (b.max.x - b.min.x) / (n - 1), nx = n, nz = Math.round((b.max.z - b.min.z) / st) + 1, h = new Float32Array(nx * nz).fill(NaN);
+    const pa = o.geometry.attributes.position; o.geometry.computeBoundingBox(); const b = o.geometry.boundingBox;
+    // grid size from the columns and rows actually present: Draco splits vertices and shifts them slightly, so the vertex count is not n x n
+    const lines = get => { const a = new Float32Array(pa.count); for (let i = 0; i < pa.count; i++) a[i] = get(i); a.sort(); let k = 1; for (let i = 1; i < a.length; i++) if (a[i] - a[i - 1] > 1) k++; return k; };
+    const nxL = lines(i => pa.getX(i)), nzL = lines(i => pa.getZ(i));
+    const x0 = b.min.x, z0 = b.min.z, st = (b.max.x - b.min.x) / (nxL - 1), stz = (b.max.z - b.min.z) / (nzL - 1), nx = nxL, nz = nzL, h = new Float32Array(nx * nz).fill(NaN);
     for (let i = 0; i < pa.count; i++) {
-      const fx = (pa.getX(i) - x0) / st, fz = (pa.getZ(i) - z0) / st, ix = Math.round(fx), iz = Math.round(fz);
-      if (Math.abs(fx - ix) < 0.02 && Math.abs(fz - iz) < 0.02 && ix >= 0 && iz >= 0 && ix < nx && iz < nz) h[iz * nx + ix] = pa.getY(i);
+      const fx = (pa.getX(i) - x0) / st, fz = (pa.getZ(i) - z0) / stz, ix = Math.round(fx), iz = Math.round(fz);
+      if (Math.abs(fx - ix) < 0.25 && Math.abs(fz - iz) < 0.25 && ix >= 0 && iz >= 0 && ix < nx && iz < nz) h[iz * nx + ix] = pa.getY(i);
     }
-    HF.push({ x0, z0, st, nx, nz, h });
+    HF.push({ x0, z0, st, stz, nx, nz, h });
   }
   HF.sort((a, b) => a.st - b.st);
 }
 function groundAt(x, z) {
   for (const g of HF) {
-    const fx = (x - g.x0) / g.st, fz = (z - g.z0) / g.st, ix = Math.floor(fx), iz = Math.floor(fz);
+    const fx = (x - g.x0) / g.st, fz = (z - g.z0) / g.stz, ix = Math.floor(fx), iz = Math.floor(fz);
     if (ix < 0 || iz < 0 || ix >= g.nx - 1 || iz >= g.nz - 1) continue;
     const a = g.h[iz * g.nx + ix], b = g.h[iz * g.nx + ix + 1], c = g.h[(iz + 1) * g.nx + ix], d = g.h[(iz + 1) * g.nx + ix + 1];
     if (a !== a || b !== b || c !== c || d !== d) continue;   // a hole (the far grid under the core): try the next grid
