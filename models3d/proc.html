@@ -42,6 +42,7 @@
   #panel[hidden] { display: none; }
   #panel .k { color: var(--mute); font-size: 12px; text-transform: none; }
   #panel h2 { font-size: 15px; margin: 2px 0 6px; font-weight: 650; }
+  #panel .on { color: var(--mute); font-size: 12px; margin: -4px 0 6px; }
   #panel p { margin: 4px 0; color: #cfd5da; }
   #panel .pr { display: block; width: 100%; text-align: start; border: 1px solid var(--line); border-left: 4px solid var(--g, #888); border-radius: 8px; padding: 6px 9px; margin-top: 6px; background: rgba(255,255,255,.04); min-height: 0; }
   #panel .pr small { display: block; color: var(--mute); font-size: 11px; }
@@ -510,6 +511,9 @@ function hidden(from, to) {   // a hill between the camera and a point: sampled 
 const MAJOR = new Set(['castle', 'gate', 'church', 'temple', 'shrine', 'aqueduct', 'museum', 'bookshop', 'town', 'village']);
 const KCOL = { castle: '#d8b46a', gate: '#d8b46a', tower: '#b59a6a', church: '#e6e1d6', temple: '#e6e1d6', shrine: '#e0b8a0', chapel: '#cfc8b8', aqueduct: '#9fb8c8', museum: '#9fd0b0', bookshop: '#e7a0b8', library: '#e7a0b8', pillory: '#bbb', viewpoint: '#8fc1f0', attraction: '#bbb' };
 let POI = null, poiOn = true, tourI = -1, fly = null, poiEls = [], ground = [], occT = 0;
+// a place's name in the interface language where OpenStreetMap gives one (name:en etc.), else English, else the local name (16 Nov 2026)
+const dn = p => !p ? '' : ((p.names || {})[LANG] || (p.names || {}).en || p.name);
+const orig = p => p && dn(p) !== p.name ? `<div class="on" dir="auto">${esc3(p.name)}</div>` : '';
 const esc3 = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 async function initPois(root) {
   POI = await m3dGet(`${SLUG}.pois.json`, 'json').catch(() => null);
@@ -519,7 +523,7 @@ async function initPois(root) {
   for (const p of POI.pois) {
     p.pos = new THREE.Vector3(p.x, groundAt(p.x, -p.y) + (MAJOR.has(p.kind) ? 14 : 8), -p.y);
     const b = document.createElement('button'); b.type = 'button'; b.className = 'poi' + (MAJOR.has(p.kind) ? '' : ' minor');
-    b.style.setProperty('--k', KCOL[p.kind] || '#ccc'); b.innerHTML = `<span>${esc3(p.name)}</span><i></i>`; b.title = `${p.name} · ${PT.kind[p.kind] || ''}`;
+    b.style.setProperty('--k', KCOL[p.kind] || '#ccc'); b.innerHTML = `<span>${esc3(dn(p))}</span><i></i>`; b.title = `${dn(p)} · ${PT.kind[p.kind] || ''}`;
     b.onclick = () => showPlace(p); box.appendChild(b); poiEls.push([p, b]);
   }
   for (const s of POI.tour || []) s.pos = new THREE.Vector3(s.x, groundAt(s.x, -s.y), -s.y);
@@ -574,7 +578,7 @@ const poiByName = n => POI && POI.pois.find(p => p.name === n);
 function showPlace(p) {
   tourI = -1; poiEls.forEach(([q, b]) => b.classList.toggle('sel', q === p));
   const P = $('panel'); P.hidden = false;
-  P.innerHTML = `<button type="button" class="x" aria-label="${esc3(PT.close)}">✕</button><div class="k">${esc3(PT.kind[p.kind] || '')}</div><h2>${esc3(p.name)}</h2>${wikiBlock(p)}<div class="src">${esc3(PT.src)}${p.desc && p.desc[LANG] ? ' ' + esc3(PT.wdsrc) + '.' : ''}</div>`;
+  P.innerHTML = `<button type="button" class="x" aria-label="${esc3(PT.close)}">✕</button><div class="k">${esc3(PT.kind[p.kind] || '')}</div><h2>${esc3(dn(p))}</h2>${orig(p)}${wikiBlock(p)}<div class="src">${esc3(PT.src)}${p.desc && p.desc[LANG] ? ' ' + esc3(PT.wdsrc) + '.' : ''}</div>`;
   bindPanel(); wikiFill(p); flyTo(p.pos.clone().setY(p.pos.y - 8), null);
 }
 function facts(s) {
@@ -590,7 +594,7 @@ function tourGo(i) {
   const T_ = POI.tour; if (i < 0 || i >= T_.length) return; tourI = i; const s = T_[i];
   poiEls.forEach(([q, b]) => b.classList.toggle('sel', q.name === s.name));
   const P = $('panel'); P.hidden = false;
-  P.innerHTML = `<button type="button" class="x" aria-label="${esc3(PT.close)}">✕</button><div class="k">${esc3(fmt(PT.stop, i + 1, T_.length))} · ${esc3(PT.kind[s.kind] || '')}</div><h2>${esc3(s.name)}</h2>${wikiBlock(poiByName(s.name))}${facts(s)}${pracHTML(s.practices)}
+  P.innerHTML = `<button type="button" class="x" aria-label="${esc3(PT.close)}">✕</button><div class="k">${esc3(fmt(PT.stop, i + 1, T_.length))} · ${esc3(PT.kind[s.kind] || '')}</div><h2>${esc3(dn(poiByName(s.name)) || s.name)}</h2>${orig(poiByName(s.name))}${wikiBlock(poiByName(s.name))}${facts(s)}${pracHTML(s.practices)}
     <div class="nav"><button type="button" data-go="prev" ${i ? '' : 'disabled'}>${esc3(PT.prev)}</button><button type="button" data-go="next">${esc3(i < T_.length - 1 ? PT.next : PT.end)}</button></div><div class="src">${esc3(PT.src)}${((poiByName(s.name) || {}).desc || {})[LANG] ? ' ' + esc3(PT.wdsrc) + '.' : ''}</div>`;
   bindPanel(); wikiFill(poiByName(s.name));
   const tgt = s.pos.clone().setY(s.pos.y + 6), cam = new THREE.Vector3(s.cam[0], groundAt(s.cam[0], -s.cam[2]) + s.cam[1], -s.cam[2]);
@@ -622,7 +626,7 @@ function updatePois() {
     show = show && (!b.dataset.occ || b.classList.contains('sel'));
     const sx = (v.x + 1) / 2 * w, sy = (1 - v.y) / 2 * h;
     if (show) {
-      const bw = b._w || (b._w = Math.min(230, p.name.length * 6.6 + 20)), r = [sx - bw / 2 - 3, sy - 38, sx + bw / 2 + 3, sy - 14];
+      const bw = b._w || (b._w = Math.min(230, dn(p).length * 6.6 + 20)), r = [sx - bw / 2 - 3, sy - 38, sx + bw / 2 + 3, sy - 14];
       if (!b.classList.contains('sel') && placed.some(q => r[0] < q[2] && r[2] > q[0] && r[1] < q[3] && r[3] > q[1])) show = false; else placed.push(r);
     }
     b.style.display = show ? '' : 'none';
