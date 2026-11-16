@@ -532,8 +532,10 @@ function hidden(from, to) {   // a hill between the camera and a point: sampled 
 const MAJOR = new Set(['castle', 'gate', 'church', 'temple', 'shrine', 'aqueduct', 'museum', 'bookshop', 'town', 'village']);
 const KCOL = { castle: '#d8b46a', gate: '#d8b46a', tower: '#b59a6a', church: '#e6e1d6', temple: '#e6e1d6', shrine: '#e0b8a0', chapel: '#cfc8b8', aqueduct: '#9fb8c8', museum: '#9fd0b0', bookshop: '#e7a0b8', library: '#e7a0b8', pillory: '#bbb', viewpoint: '#8fc1f0', attraction: '#bbb' };
 let POI = null, poiOn = true, tourI = -1, fly = null, poiEls = [], ground = [], occT = 0;
-// a place's name in the interface language where OpenStreetMap gives one (name:en etc.), else English, else the local name (16 Nov 2026)
-const dn = p => !p ? '' : ((p.names || {})[LANG] || (p.names || {}).en || p.name);
+// a place's name: names in Latin script stay as written (proper names, as the Explorer keeps BTV names); names in other scripts (Japanese,
+// Georgian ...) in the interface language where OpenStreetMap gives one (name:en etc.), else English, else as written (16 Nov 2026)
+const LATIN = /^[\p{Script=Latin}\p{N}\p{P}\p{S}\s]*$/u;
+const dn = p => !p ? '' : LATIN.test(p.name) ? p.name : ((p.names || {})[LANG] || (p.names || {}).en || p.name);
 const orig = p => p && dn(p) !== p.name ? `<div class="on" dir="auto">${esc3(p.name)}</div>` : '';
 const esc3 = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 async function initPois(root) {
