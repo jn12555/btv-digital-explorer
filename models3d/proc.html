@@ -57,6 +57,26 @@
   #panel .wk a { color: var(--acc); }
   @media (max-width: 560px) { #panel { top: auto; bottom: 86px; right: 8px; left: 8px; width: auto; } .poi.minor { display: none; } }
 </style>
+<!-- faster start on slow connections (16 Nov 2026, measured over a roaming hotspot): every three.js module is requested at once instead of in two
+     waves, and the village data starts downloading before the modules have arrived; online the encrypted copy is fetched directly -->
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/controls/OrbitControls.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/objects/Sky.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/postprocessing/EffectComposer.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/postprocessing/RenderPass.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/postprocessing/GTAOPass.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/postprocessing/OutputPass.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/postprocessing/Pass.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/postprocessing/ShaderPass.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/postprocessing/MaskPass.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/shaders/CopyShader.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/shaders/GTAOShader.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/shaders/PoissonDenoiseShader.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/shaders/OutputShader.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/math/SimplexNoise.js" crossorigin>
+<script>window.m3dPre = (() => { const s = (new URLSearchParams(location.search).get('m') || 'asuka').replace(/[^a-z0-9-]/g, ''), gh = /\.github\.io$/.test(location.hostname);
+  const f = n => fetch(gh ? '/btv-explorer-models/' + n + '.enc' : n).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null);
+  return { gh, files: { [s + '.proc.json']: f(s + '.proc.json'), [s + '.pois.json']: f(s + '.pois.json') } }; })();</script>
 <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }</script>
 </head>
 <body>
@@ -96,12 +116,13 @@ const T = STR[STR[q.get('lang')] ? q.get('lang') : 'en'];
 document.documentElement.lang = STR[q.get('lang')] ? q.get('lang') : 'en'; if (q.get('lang') === 'ar') document.documentElement.dir = 'rtl';
 document.getElementById('loadTxt').textContent = T.load;
 async function m3dGet(name, type) {   // plain file locally; online the encrypted copy, opened with the key the password page left for this tab (as viewer.html)
-  const r = await fetch(name).catch(() => null);
-  if (r && r.ok) return type === 'json' ? r.json() : r.arrayBuffer();
+  const P = window.m3dPre || {}, early = P.files && P.files[name] ? await P.files[name] : null;   // started in the page head
+  if (early && !P.gh) { const t = new TextDecoder().decode(early); return type === 'json' ? JSON.parse(t) : early; }
+  if (!early && !P.gh) { const r = await fetch(name).catch(() => null); if (r && r.ok) return type === 'json' ? r.json() : r.arrayBuffer(); }
   const k = sessionStorage.getItem('btv-m3d'); if (!k) throw new Error('locked');
   const key = await crypto.subtle.importKey('raw', Uint8Array.from(atob(k), c => c.charCodeAt(0)), 'AES-GCM', false, ['decrypt']);
   const base = /\.github\.io$/.test(location.hostname) ? '/btv-explorer-models/' : '';
-  const e = new Uint8Array(await (await fetch(base + name + '.enc')).arrayBuffer());
+  const e = new Uint8Array(early || await (await fetch(base + name + '.enc')).arrayBuffer());
   const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: e.slice(0, 12) }, key, e.slice(12));
   return type === 'json' ? JSON.parse(new TextDecoder().decode(plain)) : plain;
 }
