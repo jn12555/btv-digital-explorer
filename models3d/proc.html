@@ -59,7 +59,7 @@
 </style>
 <!-- faster start on slow connections (16 Nov 2026, measured over a roaming hotspot): every three.js module is requested at once instead of in two
      waves, and the village data starts downloading before the modules have arrived; online the encrypted copy is fetched directly -->
-<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js" crossorigin>
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/controls/OrbitControls.js" crossorigin>
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/objects/Sky.js" crossorigin>
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/postprocessing/EffectComposer.js" crossorigin>
@@ -77,7 +77,7 @@
 <script>window.m3dPre = (() => { const s = (new URLSearchParams(location.search).get('m') || 'asuka').replace(/[^a-z0-9-]/g, ''), gh = /\.github\.io$/.test(location.hostname);
   const f = n => fetch(gh ? '/btv-explorer-models/' + n + '.enc' : n).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null);
   return { gh, files: { [s + '.proc.json']: f(s + '.proc.json'), [s + '.pois.json']: f(s + '.pois.json') } }; })();</script>
-<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }</script>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }</script>
 </head>
 <body>
 <div id="load"><span id="loadTxt">…</span></div>
@@ -192,7 +192,7 @@ scene.add(terrainMesh(TH, new THREE.MeshStandardMaterial({ color: '#56693f', rou
 // ---------- textures for walls and roofs (drawn, not downloaded) ----------
 // Wall atlas: four bays of one storey each (window, door, plain, stone plinth). Colour channels hold the drawing; alpha marks
 // what takes the house's own colour (plaster and boards) and what keeps its own (timber frame, paper screens, glass, stone).
-const TIMBER = ['east_asian', 'alpine', 'patagonian_timber'].includes(S.name);
+const TIMBER = S.timber_frame !== undefined ? S.timber_frame : ['east_asian', 'alpine', 'patagonian_timber'].includes(S.name);   // style setting since 17 Nov 2026
 function atlas(w, h, draw) {
   const c = document.createElement('canvas'), m = document.createElement('canvas'); c.width = m.width = w; c.height = m.height = h;
   const g = c.getContext('2d'), k = m.getContext('2d'); k.fillStyle = '#000'; k.fillRect(0, 0, w, h);
@@ -217,7 +217,7 @@ const WALLTEX = atlas(512, 128, (R, g) => {
     for (const px of [128 + 13, 128 + 66]) { R(px, 15, 49, 58, PAPER); for (let x = px + 8; x < px + 49; x += 8) R(x, 15, 1.5, 58, '#7a634c'); for (let y = 25; y < 73; y += 10) R(px, y, 49, 1.5, '#7a634c'); R(px, 76, 49, 42, WOOD2); }
     R(256, 58, 128, 6, WOOD);                                                                // plain bay: a middle rail
   } else {
-    const SH = S.name === 'mediterranean' ? '#3f6a5a' : S.name === 'andean' ? '#2f4f7a' : '#5a4632';
+    const SH = S.shutter ? `rgb(${S.shutter.join(',')})` : S.name === 'mediterranean' ? '#3f6a5a' : S.name === 'andean' ? '#2f4f7a' : '#5a4632';
     R(44, 26, 40, 56, '#2a2e33'); R(46, 28, 36, 52, '#39434c'); R(62, 28, 3, 52, '#ddd'); R(46, 52, 36, 3, '#ddd');   // window and glazing bars
     R(28, 24, 15, 60, SH); R(85, 24, 15, 60, SH); R(40, 82, 48, 5, '#d8d2c6');                  // shutters and sill
     R(128 + 40, 30, 48, 98, '#4a3324'); R(128 + 44, 34, 40, 94, '#5d4330'); R(128 + 36, 26, 56, 5, '#d8d2c6');   // door
@@ -329,6 +329,38 @@ const FASCIA = { r: 0.16, g: 0.13, b: 0.1 }, CAP = { r: 0.12, g: 0.12, b: 0.13 }
 let nB = 0, nLand = 0; const GARDEN = [];
 const DARK = { r: 0.18, g: 0.17, b: 0.16 };
 const EAST = S.name === 'east_asian';
+// ---------- places of worship by style, round huts, stilts (17 Nov 2026, new styles) ----------
+const LMK = S.landmark || (EAST ? 'temple' : 'spire'), POST = { r: 0.2, g: 0.15, b: 0.1 };
+function box(B, x, y, z0, z1, hw, colr) { const c = [[x - hw, y - hw], [x + hw, y - hw], [x + hw, y + hw], [x - hw, y + hw]]; for (let q = 0; q < 4; q++) { const [ax, ay] = c[q], [bx, by] = c[(q + 1) % 4]; quad(B, V(ax, ay, z0), V(bx, by, z0), V(bx, by, z1), V(ax, ay, z1), Z2, Z2, Z2, Z2, colr); } quad(B, V(...c[0], z1), V(...c[1], z1), V(...c[2], z1), V(...c[3], z1), Z2, Z2, Z2, Z2, colr); }
+function coneB(B, cx, cy, r, z0, z1, n, colr, us) { for (let i = 0; i < n; i++) { const a0 = i / n * 6.2832, a1 = (i + 1) / n * 6.2832; tri(B, V(cx + Math.cos(a0) * r, cy + Math.sin(a0) * r, z0), V(cx + Math.cos(a1) * r, cy + Math.sin(a1) * r, z0), V(cx, cy, z1), [i * us, 0], [(i + 1) * us, 0], [(i + 0.5) * us, r * 2.4], colr); } }
+function ring(cx, cy, r, n) { const p = []; for (let i = 0; i < n; i++) { const a = i / n * 6.2832; p.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); } return p; }
+function dome(B, cx, cy, r, z0, colr) { const n = 14, m = 6; const P = (i, j) => { const a = i / n * 6.2832, b = j / m * Math.PI / 2; return V(cx + Math.cos(a) * Math.cos(b) * r, cy + Math.sin(a) * Math.cos(b) * r, z0 + Math.sin(b) * r); }; for (let j = 0; j < m; j++) for (let i = 0; i < n; i++) quad(B, P(i, j), P(i + 1, j), P(i + 1, j + 1), P(i, j + 1), Z2, Z2, Z2, Z2, colr); }
+function flatTop(pts, z, colr) { const tr = THREE.ShapeUtils.triangulateShape(pts.map(([x, y]) => new THREE.Vector2(x, y)), []); for (const [a, b, c] of tr) tri(TRIM, V(...pts[a], z), V(...pts[b], z), V(...pts[c], z), Z2, Z2, Z2, colr); }
+function worship(o, pts, base, plinthTop, top, wc, rc) {   // church, mosque or tiered temple roof over the mapped outline
+  if (LMK === 'mosque') {
+    flatTop(pts, top, DARK); for (let i = 0; i < pts.length; i++) { const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length]; quad(TRIM, V(x1, y1, top), V(x2, y2, top), V(x2, y2, top + 0.6), V(x1, y1, top + 0.6), Z2, Z2, Z2, Z2, wc); }
+    dome(TRIM, o.cx, o.cy, Math.min(o.W, o.L) * 0.72, top + 0.4, { r: 0.55, g: 0.55, b: 0.52 });
+    const mx = o.cx + o.ux * (o.L + 1.6) - o.uy * (o.W - 1), my = o.cy + o.uy * (o.L + 1.6) + o.ux * (o.W - 1), mh = top + 12 + Math.min(10, o.L);
+    walls(ring(mx, my, 1.25, 10), base, plinthTop, mh, 6, wc, 'tower'); box(TRIM, mx, my, mh - 4, mh - 3.6, 1.6, { r: 0.6, g: 0.6, b: 0.57 }); flatTop(ring(mx, my, 1.25, 10), mh, DARK); coneB(TRIM, mx, my, 1.3, mh, mh + 3.2, 10, { r: 0.4, g: 0.42, b: 0.44 }, 0);
+    return;
+  }
+  if (LMK === 'tiered') { let e = top, oo = { ...o }; for (let k = 0; k < 3; k++) { roofHF(oo, e, 1.4, 32, 'hip', { buf: ROOF, colr: rc, curve: 1.2, lift: 0.4 }); oo = shrink(oo, Math.min(oo.W, oo.L) * 0.25); e += 2.4; } return; }
+  // church or chapel: a steep gable over the nave and a tower at one end with a spire, a pyramid (campanile) or a small bellcote (chapel)
+  roofHF(o, top, 0.4, 48, 'gable', { buf: ROOF, colr: rc, gableColr: wc });
+  if (o.L < 4 || (LMK === 'chapel' && o.L < 9)) { const bx = o.cx + o.ux * (o.L - 0.6), by = o.cy + o.uy * (o.L - 0.6), z = top + o.W * Math.tan(48 * Math.PI / 180); box(WALL, bx, by, z - 0.6, z + 2.2, 0.7, wc); coneB(ROOF, bx, by, 1.0, z + 2.2, z + 3.6, 4, rc, 0.5); return; }
+  const tw = Math.min(Math.max(o.W * 1.1, 3.2), 6), hw = tw / 2, tx = o.cx + o.ux * (o.L + hw - 0.4), ty = o.cy + o.uy * (o.L + hw - 0.4);
+  const th = top + (LMK === 'campanile' ? 9 : 11) + Math.min(10, o.L * 0.4);
+  walls([[tx - o.ux * hw + o.uy * hw, ty - o.uy * hw - o.ux * hw], [tx + o.ux * hw + o.uy * hw, ty + o.uy * hw - o.ux * hw], [tx + o.ux * hw - o.uy * hw, ty + o.uy * hw + o.ux * hw], [tx - o.ux * hw - o.uy * hw, ty - o.uy * hw + o.ux * hw]], base, plinthTop, th, Math.max(3, Math.round((th - plinthTop) / 3.6)), wc, 'tower');
+  if (LMK === 'campanile') roofHF({ cx: tx, cy: ty, ux: o.ux, uy: o.uy, L: hw, W: hw }, th, 0.25, 28, 'hip', { buf: ROOF, colr: rc, fascia: 0.3, capH: 0.01, capW: 0.01 });
+  else coneB(ROOF, tx, ty, hw * 1.2, th, th + tw * 2.6, 8, rc, 0.6);
+}
+function roundHut(pts, base, wc) {   // round house: a drum of mud or plaster under a conical thatch with a wide eave
+  let cx = 0, cy = 0, A = 0; for (const [x, y] of pts) { cx += x; cy += y; } cx /= pts.length; cy /= pts.length;
+  for (let i = 0; i < pts.length; i++) { const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length]; A += x1 * y2 - x2 * y1; }
+  const r = Math.max(1.5, Math.sqrt(Math.abs(A) / 2 / Math.PI)), g = gh(cx, cy), top = g + 2.3 + rnd() * 0.4;
+  walls(ring(cx, cy, r, 12), base, g + 0.15, top, 1, wc, 0);
+  coneB(THATCH, cx, cy, r + 0.75, top - 0.25, top + r * 1.05 + 0.6, 14, col([158, 138, 98]), 1.2);
+}
 for (let [flat, hMapped, lv, kind] of D.b) {
   let pts = []; for (let i = 0; i < flat.length; i += 2) pts.push([flat[i] / 4, flat[i + 1] / 4]);
   if (pts.length < 3) continue;
@@ -336,12 +368,16 @@ for (let [flat, hMapped, lv, kind] of D.b) {
   if (A < 0) pts.reverse(); A = Math.abs(A) / 2; if (A < 6) continue;
   let gmin = 1e9, gmax = -1e9; for (const [x, y] of pts) { const h = gh(x, y); gmin = Math.min(gmin, h); gmax = Math.max(gmax, h); }
   const TOWER = kind === 3; if (TOWER) kind = 0;
+  if (!kind && !TOWER && S.round_share && A < 80) { const oq = obb(pts); if (oq.L / Math.max(0.5, oq.W) < 1.35 && (pts.length >= 7 || rnd() < S.round_share)) { roundHut(pts, gmin - 0.4, col(pick(S.walls))); nB++; continue; } }
+  const STILT = !kind && !TOWER && S.stilts && rnd() < S.stilts;   // houses on posts (stilt_timber)
   const floors = TOWER ? Math.max(4, Math.round((hMapped > 0 ? hMapped : 15) / 3.6)) : kind ? 1 : lv > 0 ? Math.min(4, lv) : hMapped > 0 ? Math.max(1, Math.round(hMapped / 3)) : A < 30 ? 1 : pick([[1, S.floors[0]], [2, S.floors[1]], [3, S.floors[2] || 0.0001]]);
   const fh = TOWER ? (hMapped > 0 ? hMapped * 0.85 / floors : 3.6) : kind ? 5.2 : S.floor_h;
-  const base = gmin - 0.4, plinthTop = gmax + (kind ? 1.0 : 0.45), top = plinthTop + floors * fh;
+  const base = gmin - 0.4, plinthTop = gmax + (kind ? 1.0 : STILT ? S.stilt_h || 1.8 : 0.45), top = plinthTop + floors * fh;
   const wc = TOWER ? col([158, 148, 132]) : kind ? col([206, 188, 156]) : col(pick(S.walls)), rc = kind ? col([104, 108, 116]) : col(pick(S.roofs).map(v => Math.min(255, v * 1.22)));   // tiles read darker than their colour under the course shadows
-  walls(pts, base, plinthTop, top, floors, wc, TOWER ? 'tower' : kind);
+  walls(pts, STILT ? plinthTop - 0.35 : base, plinthTop, top, floors, wc, TOWER ? 'tower' : kind);
+  if (STILT) { for (let i = 0; i < pts.length; i++) { const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length]; box(TRIM, x1, y1, gmin - 0.3, plinthTop - 0.3, 0.13, POST); if (Math.hypot(x2 - x1, y2 - y1) > 4) box(TRIM, (x1 + x2) / 2, (y1 + y2) / 2, gmin - 0.3, plinthTop - 0.3, 0.13, POST); } flatTop(pts, plinthTop - 0.36, POST); }
   const o = obb(pts), fill = A / o.area;
+  if (kind === 1 && LMK !== 'temple') { worship(o, pts, base, plinthTop, top, wc, col(pick(S.roofs).map(v => Math.min(255, v * 1.22)))); nB++; nLand++; continue; }
   let type = TOWER ? 'tower' : kind ? 'irimoya' : pick(S.types);
   if (type === 'tower' && fill > 0.6) {
     roofHF(o, top, 0.35, 42, 'hip', { buf: ROOF, colr: rc, curve: 1, fascia: 0.3, capH: 0.01, capW: 0.01 });
@@ -412,7 +448,7 @@ const spots = [];
 for (const f of D.w) {
   let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9; for (let i = 0; i < f.length; i += 2) { x0 = Math.min(x0, f[i] / 4); x1 = Math.max(x1, f[i] / 4); y0 = Math.min(y0, f[i + 1] / 4); y1 = Math.max(y1, f[i + 1] / 4); }
   const want = Math.min(3200, (x1 - x0) * (y1 - y0) / 38);
-  for (let k = 0; k < want && spots.length < 16000; k++) { const x = x0 + rnd() * (x1 - x0), y = y0 + rnd() * (y1 - y0); if (Math.abs(x) < D.half + 150 && Math.abs(y) < D.half + 150 && inPoly(x, y, f)) spots.push([x, y, rnd() < 0.45 ? 1 : 0]); }
+  for (let k = 0; k < want && spots.length < 16000; k++) { const x = x0 + rnd() * (x1 - x0), y = y0 + rnd() * (y1 - y0); if (Math.abs(x) < D.half + 150 && Math.abs(y) < D.half + 150 && inPoly(x, y, f)) spots.push([x, y, rnd() < (['tropical', 'palm', 'savanna'].includes(S.vegetation) ? 0 : 0.45) ? 1 : 0]);   /* no conifers in tropical or savanna woods */ }
 }
 for (const g of GARDEN) spots.push([g[0], g[1], 0, 1]);
 const time = { value: 0 };
@@ -426,8 +462,16 @@ const crown = new THREE.InstancedMesh(clump, leafM, broad.length), cedar = new T
 const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.16, 0.26, 1, 5), new THREE.MeshStandardMaterial({ color: '#4a3a2a' }), spots.length);
 const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), tint = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
 let ti = 0;
+const PALM = S.vegetation === 'tropical' || S.vegetation === 'palm', ACACIA = S.vegetation === 'savanna';   // 17 Nov 2026
 broad.forEach(([x, y, , garden], i) => {
   const s = (garden ? 1.6 : 2.2) + rnd() * 1.8, g = gh(x, y); Q.setFromAxisAngle(up, rnd() * 6.28);
+  if ((PALM && (garden || rnd() < 0.35)) || ACACIA) {   // palm: tall thin trunk, flat crown of fronds; acacia: short trunk, wide flat crown
+    const h = PALM ? 6 + rnd() * 5 : 2.6 + rnd() * 1.5, cs = PALM ? s * 1.1 : s * 1.5;
+    M4.compose(new THREE.Vector3(x, g + h + 0.3, -y), Q, new THREE.Vector3(cs, cs * (PALM ? 0.32 : 0.38), cs)); crown.setMatrixAt(i, M4);
+    crown.setColorAt(i, tint.setHSL(PALM ? 0.26 + rnd() * 0.05 : 0.2 + rnd() * 0.05, PALM ? 0.5 : 0.32, PALM ? 0.16 + rnd() * 0.05 : 0.14 + rnd() * 0.05));
+    M4.compose(new THREE.Vector3(x, g + h / 2, -y), Q, new THREE.Vector3(PALM ? 0.75 : 1, h, PALM ? 0.75 : 1)); trunk.setMatrixAt(ti++, M4);
+    return;
+  }
   M4.compose(new THREE.Vector3(x, g + 2.2 + s, -y), Q, new THREE.Vector3(s, s * (0.8 + rnd() * 0.4), s)); crown.setMatrixAt(i, M4);
   crown.setColorAt(i, tint.setHSL(0.21 + rnd() * 0.08, 0.38 + rnd() * 0.14, 0.12 + rnd() * 0.07));
   M4.compose(new THREE.Vector3(x, g + 1.3, -y), Q, new THREE.Vector3(1, 2.6, 1)); trunk.setMatrixAt(ti++, M4);
