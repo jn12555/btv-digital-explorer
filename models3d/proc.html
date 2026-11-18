@@ -100,6 +100,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 
 const q = new URLSearchParams(location.search), slug = (q.get('m') || 'asuka').replace(/[^a-z0-9-]/g, '');
 // interface strings (drafts in French, Spanish and Arabic, like the Explorer's other translations)
@@ -164,13 +165,57 @@ const sun = new THREE.DirectionalLight('#ffe2b8', 3.1); sun.position.copy(SUN).m
 sun.shadow.mapSize.set(4096, 4096); Object.assign(sun.shadow.camera, { left: -700, right: 700, top: 700, bottom: -700, near: 10, far: 3000 }); sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.6;
 scene.add(sun, sun.target);
 
+// ---------- land cover (ESA WorldCover 10 m, landcover.py) and climate (Köppen-Geiger), for the ground (18 Nov 2026, Jost: 'style first') ----------
+async function lcRead(G) {
+  if (!G) return null;
+  const blob = new Blob([Uint8Array.from(atob(G.png), c => c.charCodeAt(0))], { type: 'image/png' });
+  const b = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+  const c = document.createElement('canvas'); c.width = c.height = G.n; const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(b, 0, 0);
+  const d = g.getImageData(0, 0, G.n, G.n).data, a = new Uint8Array(G.n * G.n); for (let i = 0; i < a.length; i++) a[i] = d[i * 4];
+  return { ...G, a };
+}
+let seed2 = (D.seed ^ 0x5bd1e995) >>> 0;   // own random stream: the houses keep the sequence (and look) they were approved with
+const rnd2 = () => { seed2 |= 0; seed2 = seed2 + 0x6D2B79F5 | 0; let t = Math.imul(seed2 ^ seed2 >>> 15, 1 | seed2); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+const LCN = await lcRead(D.lc).catch(() => null), LCF = await lcRead(D.lcf).catch(() => null);
+const KG = D.climate || '', K0 = KG[0] || '';
+const DRY = KG.startsWith('BW') ? 1 : KG.startsWith('BS') ? 0.72 : /^Cs/.test(KG) ? 0.34 : KG === 'ET' ? 0.5 : /^(Aw|As)/.test(KG) ? 0.3 : /^Ds/.test(KG) || (/^Cw[bc]/.test(KG) && S.name === 'andean') ? 0.32 : 0.06;   /* high-Andean grass is tawny */   // how parched the ground looks
+const TROP = K0 === 'A', COLD = K0 === 'E' || S.name === 'alpine', HOTDESERT = KG === 'BWh';
+const hex = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+const mixC = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+const mixHex = (a, b, t) => '#' + mixC(hex(a), hex(b), t).map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
+// class colours, lush and parched; the climate's dryness mixes between them
+const LCPAL = { 10: ['#3c5530', '#5c5b3a'], 20: ['#64703f', '#958659'], 30: [TROP ? '#5a8740' : '#6f8a4e', '#b9a678'], 40: ['#8c9b55', '#bda97a'],
+  50: ['#7b8259', '#bcab8e'], 60: [COLD ? '#8c877e' : '#9a937e', '#cfb68c'], 70: ['#e8eef3', '#e8eef3'], 80: ['#4f6f78', '#4f6f78'],
+  90: ['#5a7650', '#82825f'], 95: ['#34502e', '#34502e'], 100: ['#7b7e60', '#8f8870'], 0: [TROP ? '#5a8740' : '#6f8a4e', '#b9a678'] };
+const LCRGB = {}; for (const k in LCPAL) LCRGB[k] = mixC(hex(LCPAL[k][0]), hex(LCPAL[k][1]), DRY);
+const ROCK = mixC(hex('#837d73'), hex('#a48c6c'), DRY);
+function paintLC(ctx, G, Wpx, T) {   // land cover cells coloured by class, steep slopes as rock, drawn smoothly over the whole canvas
+  const n = G.n, cell = G.size / n, c = document.createElement('canvas'); c.width = c.height = n; const g = c.getContext('2d'), im = g.createImageData(n, n);
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const k = G.a[j * n + i], x = -G.size / 2 + (i + 0.5) * cell, y = G.size / 2 - (j + 0.5) * cell;
+    let rgb = LCRGB[k] || LCRGB[0];
+    if (k !== 70 && k !== 80) {
+      const e = cell / 2, sl = Math.hypot(hAt(T, x + e, y) - hAt(T, x - e, y), hAt(T, x, y + e) - hAt(T, x, y - e)) / (2 * e);
+      const t = Math.min(1, Math.max(0, (sl - 0.62) / 0.5)); if (t > 0) rgb = mixC(rgb, ROCK, t * (k === 10 ? 0.45 : 0.85));
+    }
+    const v = 0.94 + rnd2() * 0.12, o = (j * n + i) * 4; im.data[o] = rgb[0] * v; im.data[o + 1] = rgb[1] * v; im.data[o + 2] = rgb[2] * v; im.data[o + 3] = 255;
+  }
+  g.putImageData(im, 0, 0); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.drawImage(c, 0, 0, Wpx, Wpx);
+}
+function lcTexture(G, Wpx, T) {
+  const c = document.createElement('canvas'); c.width = c.height = Wpx; const g = c.getContext('2d'); paintLC(g, G, Wpx, T);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+const lcAt = (x, y) => { if (!LCN) return 0; const n = LCN.n, i = Math.floor((x + LCN.size / 2) / LCN.size * n), j = Math.floor((LCN.size / 2 - y) / LCN.size * n); return i < 0 || j < 0 || i >= n || j >= n ? 0 : LCN.a[j * n + i]; };
+
 // ---------- ground texture painted from the open data ----------
 const W = 4096, cv = document.createElement('canvas'); cv.width = cv.height = W; const cx = cv.getContext('2d');
 const SZ = D.terrain.size, P = v => (v / 4 + SZ / 2) / SZ * W, PY = v => (SZ / 2 - v / 4) / SZ * W, PX = W / SZ;
-cx.fillStyle = '#6f8a4e'; cx.fillRect(0, 0, W, W);
-for (let i = 0; i < 14000; i++) { cx.fillStyle = `rgba(${50 + rnd() * 40},${75 + rnd() * 30},${35 + rnd() * 15},.10)`; const r = 2 + rnd() * 12; cx.beginPath(); cx.arc(rnd() * W, rnd() * W, r, 0, 7); cx.fill(); }
+cx.fillStyle = '#6f8a4e'; cx.fillRect(0, 0, W, W); if (LCN) paintLC(cx, LCN, W, TN);   // land cover first, then the mapped fields, woods, water and roads on top
+cx.globalCompositeOperation = 'soft-light'; for (let i = 0; i < 14000; i++) { const gv = 80 + rnd() * 96; rnd(); rnd(); cx.fillStyle = `rgba(${gv},${gv},${gv},.3)`;   /* blotches that darken or lighten the land cover's own colour */ const r = 2 + rnd() * 12; cx.beginPath(); cx.arc(rnd() * W, rnd() * W, r, 0, 7); cx.fill(); }
+cx.globalCompositeOperation = 'source-over';
 const poly = (f, close = true) => { cx.beginPath(); for (let i = 0; i < f.length; i += 2) (i ? cx.lineTo : cx.moveTo).call(cx, P(f[i]), PY(f[i + 1])); if (close) cx.closePath(); };
-const FIELD = ['#9aa45a', '#87a161', '#7b8f4c'];
+const FIELD = ['#9aa45a', '#87a161', '#7b8f4c'].map(c => mixHex(c, '#bca97a', DRY * 0.65));
 for (const [f, k] of D.f) { poly(f); cx.fillStyle = FIELD[k]; cx.fill(); cx.save(); cx.clip(); cx.strokeStyle = 'rgba(60,70,30,.25)'; cx.lineWidth = 1; const a = rnd() * 3; for (let i = -W; i < W; i += 7) { cx.beginPath(); cx.moveTo(P(f[0]) + Math.cos(a) * -W + i * Math.sin(a), PY(f[1]) + Math.sin(a) * -W - i * Math.cos(a)); cx.lineTo(P(f[0]) + Math.cos(a) * W + i * Math.sin(a), PY(f[1]) + Math.sin(a) * W - i * Math.cos(a)); cx.stroke(); } cx.restore(); }
 for (const f of D.w) { poly(f); cx.fillStyle = '#41562f'; cx.fill(); }
 for (const [f, line] of D.water) { if (line) { poly(f, false); cx.strokeStyle = '#4f6f78'; cx.lineWidth = 5 * PX; cx.stroke(); } else { poly(f); cx.fillStyle = '#4f6f78'; cx.fill(); } }
@@ -188,7 +233,7 @@ function terrainMesh(T, mat, sink) {
   g.computeVertexNormals(); const m = new THREE.Mesh(g, mat); m.receiveShadow = true; return m;
 }
 scene.add(terrainMesh(TN, new THREE.MeshStandardMaterial({ map: gtex, roughness: 1 })));
-scene.add(terrainMesh(TH, new THREE.MeshStandardMaterial({ color: '#56693f', roughness: 1 }), true));
+scene.add(terrainMesh(TH, new THREE.MeshStandardMaterial(LCF ? { map: lcTexture(LCF, 1024, TH), roughness: 1 } : { color: '#56693f', roughness: 1 }), true));   // horizon painted from 100 m land cover
 
 // ---------- textures for walls and roofs (drawn, not downloaded) ----------
 // Wall atlas: four bays of one storey each (window, door, plain, stone plinth). Colour channels hold the drawing; alpha marks
@@ -337,10 +382,11 @@ function coneB(B, cx, cy, r, z0, z1, n, colr, us) { for (let i = 0; i < n; i++) 
 function ring(cx, cy, r, n) { const p = []; for (let i = 0; i < n; i++) { const a = i / n * 6.2832; p.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); } return p; }
 function dome(B, cx, cy, r, z0, colr) { const n = 14, m = 6; const P = (i, j) => { const a = i / n * 6.2832, b = j / m * Math.PI / 2; return V(cx + Math.cos(a) * Math.cos(b) * r, cy + Math.sin(a) * Math.cos(b) * r, z0 + Math.sin(b) * r); }; for (let j = 0; j < m; j++) for (let i = 0; i < n; i++) quad(B, P(i, j), P(i + 1, j), P(i + 1, j + 1), P(i, j + 1), Z2, Z2, Z2, Z2, colr); }
 function flatTop(pts, z, colr) { const tr = THREE.ShapeUtils.triangulateShape(pts.map(([x, y]) => new THREE.Vector2(x, y)), []); for (const [a, b, c] of tr) tri(TRIM, V(...pts[a], z), V(...pts[b], z), V(...pts[c], z), Z2, Z2, Z2, colr); }
-function worship(o, pts, base, plinthTop, top, wc, rc) {   // church, mosque or tiered temple roof over the mapped outline
+function worship(o, pts, base, plinthTop, top, wc, rc, noTower) {   // church, mosque or tiered temple roof over the mapped outline; noTower: OpenStreetMap maps the tower beside it (18 Nov 2026)
   if (LMK === 'mosque') {
     flatTop(pts, top, DARK); for (let i = 0; i < pts.length; i++) { const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length]; quad(TRIM, V(x1, y1, top), V(x2, y2, top), V(x2, y2, top + 0.6), V(x1, y1, top + 0.6), Z2, Z2, Z2, Z2, wc); }
     dome(TRIM, o.cx, o.cy, Math.min(o.W, o.L) * 0.72, top + 0.4, { r: 0.55, g: 0.55, b: 0.52 });
+    if (noTower) return;
     const mx = o.cx + o.ux * (o.L + 1.6) - o.uy * (o.W - 1), my = o.cy + o.uy * (o.L + 1.6) + o.ux * (o.W - 1), mh = top + 12 + Math.min(10, o.L);
     walls(ring(mx, my, 1.25, 10), base, plinthTop, mh, 6, wc, 'tower'); box(TRIM, mx, my, mh - 4, mh - 3.6, 1.6, { r: 0.6, g: 0.6, b: 0.57 }); flatTop(ring(mx, my, 1.25, 10), mh, DARK); coneB(TRIM, mx, my, 1.3, mh, mh + 3.2, 10, { r: 0.4, g: 0.42, b: 0.44 }, 0);
     return;
@@ -348,6 +394,7 @@ function worship(o, pts, base, plinthTop, top, wc, rc) {   // church, mosque or 
   if (LMK === 'tiered') { let e = top, oo = { ...o }; for (let k = 0; k < 3; k++) { roofHF(oo, e, 1.4, 32, 'hip', { buf: ROOF, colr: rc, curve: 1.2, lift: 0.4 }); oo = shrink(oo, Math.min(oo.W, oo.L) * 0.25); e += 2.4; } return; }
   // church or chapel: a steep gable over the nave and a tower at one end with a spire, a pyramid (campanile) or a small bellcote (chapel)
   roofHF(o, top, 0.4, 48, 'gable', { buf: ROOF, colr: rc, gableColr: wc });
+  if (noTower) return;   // no invented tower where the mapped one stands beside the church (double towers, accuracy review)
   if (o.L < 4 || (LMK === 'chapel' && o.L < 9)) { const bx = o.cx + o.ux * (o.L - 0.6), by = o.cy + o.uy * (o.L - 0.6), z = top + o.W * Math.tan(48 * Math.PI / 180); box(WALL, bx, by, z - 0.6, z + 2.2, 0.7, wc); coneB(ROOF, bx, by, 1.0, z + 2.2, z + 3.6, 4, rc, 0.5); return; }
   const tw = Math.min(Math.max(o.W * 1.1, 3.2), 6), hw = tw / 2, tx = o.cx + o.ux * (o.L + hw - 0.4), ty = o.cy + o.uy * (o.L + hw - 0.4);
   const th = top + (LMK === 'campanile' ? 9 : 11) + Math.min(10, o.L * 0.4);
@@ -362,6 +409,7 @@ function roundHut(pts, base, wc) {   // round house: a drum of mud or plaster un
   walls(ring(cx, cy, r, 12), base, g + 0.15, top, 1, wc, 0);
   coneB(THATCH, cx, cy, r + 0.75, top - 0.25, top + r * 1.05 + 0.6, 14, col([158, 138, 98]), 1.2);
 }
+let nNoTower = 0; const MAPPED_TOWERS = D.b.filter(b => b[3] === 3).map(([f]) => { let x = 0, y = 0; for (let i = 0; i < f.length; i += 2) { x += f[i] / 4; y += f[i + 1] / 4; } return [x / (f.length / 2), y / (f.length / 2)]; });
 for (let [flat, hMapped, lv, kind] of D.b) {
   let pts = []; for (let i = 0; i < flat.length; i += 2) pts.push([flat[i] / 4, flat[i + 1] / 4]);
   if (pts.length < 3) continue;
@@ -378,7 +426,7 @@ for (let [flat, hMapped, lv, kind] of D.b) {
   walls(pts, STILT ? plinthTop - 0.35 : base, plinthTop, top, floors, wc, TOWER ? 'tower' : kind);
   if (STILT) { for (let i = 0; i < pts.length; i++) { const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length]; box(TRIM, x1, y1, gmin - 0.3, plinthTop - 0.3, 0.13, POST); if (Math.hypot(x2 - x1, y2 - y1) > 4) box(TRIM, (x1 + x2) / 2, (y1 + y2) / 2, gmin - 0.3, plinthTop - 0.3, 0.13, POST); } flatTop(pts, plinthTop - 0.36, POST); }
   const o = obb(pts), fill = A / o.area;
-  if (kind === 1 && LMK !== 'temple') { worship(o, pts, base, plinthTop, top, wc, col(pick(S.roofs).map(v => Math.min(255, v * 1.22)))); nB++; nLand++; continue; }
+  if (kind === 1 && LMK !== 'temple') { worship(o, pts, base, plinthTop, top, wc, col(pick(S.roofs).map(v => Math.min(255, v * 1.22))), MAPPED_TOWERS.some(([x, y]) => Math.hypot(x - o.cx, y - o.cy) < o.L + 10) && ++nNoTower > 0); nB++; nLand++; continue; }
   let type = TOWER ? 'tower' : kind ? 'irimoya' : pick(S.types);
   if (type === 'tower' && fill > 0.6) {
     roofHF(o, top, 0.35, 42, 'hip', { buf: ROOF, colr: rc, curve: 1, fascia: 0.3, capH: 0.01, capW: 0.01 });
@@ -452,10 +500,37 @@ for (const f of D.w) {
   for (let k = 0; k < want && spots.length < 16000; k++) { const x = x0 + rnd() * (x1 - x0), y = y0 + rnd() * (y1 - y0); if (Math.abs(x) < D.half + 150 && Math.abs(y) < D.half + 150 && inPoly(x, y, f)) spots.push([x, y, rnd() < (['tropical', 'palm', 'savanna'].includes(S.vegetation) ? 0 : 0.45) ? 1 : 0]);   /* no conifers in tropical or savanna woods */ }
 }
 for (const g of GARDEN) spots.push([g[0], g[1], 0, 1]);
+// mask at 2.5 m: red = building, road or water (nothing grows), green = mapped wood, blue = mapped field
+const MK = (() => {
+  if (!LCN) return null;
+  const sz = LCN.size, n = Math.round(sz / 2.5), c = document.createElement('canvas'); c.width = c.height = n; const g = c.getContext('2d', { willReadFrequently: true });
+  const mx = v => (v / 4 + sz / 2) / sz * n, my = v => (sz / 2 - v / 4) / sz * n, pl = (f, close = true) => { g.beginPath(); for (let i = 0; i < f.length; i += 2) (i ? g.lineTo : g.moveTo).call(g, mx(f[i]), my(f[i + 1])); if (close) g.closePath(); };
+  g.globalCompositeOperation = 'lighter';
+  g.fillStyle = '#00ff00'; for (const f of D.w) { pl(f); g.fill(); }
+  g.fillStyle = '#0000ff'; for (const [f] of D.f) { pl(f); g.fill(); }
+  g.fillStyle = g.strokeStyle = '#ff0000'; g.lineCap = g.lineJoin = 'round';
+  for (const [f] of D.b) { pl(f); g.fill(); g.lineWidth = 2.5 / 2.5 * 2; g.stroke(); }
+  for (const [f, w] of D.r) { pl(f, false); g.lineWidth = (w + 1.5) / 2.5; g.stroke(); }
+  for (const [f, line] of D.water) { if (line) { pl(f, false); g.lineWidth = 6 / 2.5; g.stroke(); } else { pl(f); g.fill(); } }
+  const d = g.getImageData(0, 0, n, n).data;
+  return (x, y) => { const i = Math.floor((x + sz / 2) / sz * n), j = Math.floor((sz / 2 - y) / sz * n); if (i < 0 || j < 0 || i >= n || j >= n) return 255; const o = (j * n + i) * 4; return (d[o] > 90 ? 1 : 0) | (d[o + 1] > 90 ? 2 : 0) | (d[o + 2] > 90 ? 4 : 0); };
+})();
+let lcTrees = 0;
+if (LCN && MK) {   // WorldCover tree cover the map leaves out: orchards, hedges, palm groves, woods without a mapped outline
+  const n = LCN.n, cell = LCN.size / n, lim = D.half + 150, CED = TROP || DRY > 0.5 ? 0 : S.name === 'alpine' || /^D.[cd]/.test(KG) ? 0.85 : 0.45, LCMAX = 7000;   /* mountain forest is conifer; a cap keeps the frame rate */
+  let cand = 0; for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) if (LCN.a[j * n + i] === 10 && Math.abs(-LCN.size / 2 + (i + 0.5) * cell) < lim && Math.abs(LCN.size / 2 - (j + 0.5) * cell) < lim) cand++;
+  const pr = Math.min(0.34, LCMAX / Math.max(1, cand), Math.max(0, 16000 - spots.length) / Math.max(1, cand));   // even thinning, so the cap never empties one side
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    if (LCN.a[j * n + i] !== 10 || rnd2() > pr) continue;
+    const x = -LCN.size / 2 + (i + rnd2()) * cell, y = LCN.size / 2 - (j + rnd2()) * cell;
+    if (Math.abs(x) > lim || Math.abs(y) > lim || MK(x, y) & 3) continue;
+    spots.push([x, y, rnd2() < CED ? 1 : 0, 0, HOTDESERT ? 1 : 0]); lcTrees++;
+  }
+}
 const time = { value: 0 };
 const sway = m => { m.onBeforeCompile = s => { s.uniforms.uTime = time; s.vertexShader = 'uniform float uTime;\n' + s.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vec4 ip = instanceMatrix[3]; float k = max(position.y + 1.0, 0.0); transformed.x += sin(uTime * 1.1 + ip.x * 0.07 + ip.z * 0.05) * 0.05 * k; transformed.z += cos(uTime * 0.9 + ip.z * 0.06) * 0.04 * k;'); }; return m; };
 function mergeGeoms(gs) { const out = new THREE.BufferGeometry(), p = [], n = []; for (const g of gs) { const ng = g.index ? g.toNonIndexed() : g; p.push(...ng.attributes.position.array); n.push(...ng.attributes.normal.array); } out.setAttribute('position', new THREE.Float32BufferAttribute(p, 3)); out.setAttribute('normal', new THREE.Float32BufferAttribute(n, 3)); return out; }
-const clump = mergeGeoms([[0, 0, 0, 1], [0.7, -0.25, 0.3, 0.7], [-0.6, -0.15, -0.35, 0.75], [0.1, 0.55, -0.2, 0.6]].map(([x, y, z, r]) => new THREE.IcosahedronGeometry(r, 1).translate(x, y, z)));
+const clump = mergeGeoms([[0, 0, 0, 1], [0.7, -0.25, 0.3, 0.7], [-0.6, -0.15, -0.35, 0.75], [0.1, 0.55, -0.2, 0.6]].map(([x, y, z, r]) => new THREE.IcosahedronGeometry(r, 0).scale(1.08, 1.08, 1.08).translate(x, y, z)));   /* 80 triangles a crown instead of 320 (18 Nov 2026: land-cover trees doubled the count) */
 const cone = mergeGeoms([[0, 1, 1.4], [0.75, 0.78, 1.2], [1.4, 0.52, 1.0]].map(([y, r, h]) => new THREE.ConeGeometry(r, h, 7).translate(0, y, 0)));
 const leafM = sway(new THREE.MeshStandardMaterial({ roughness: 0.95, flatShading: true })), cedarM = sway(new THREE.MeshStandardMaterial({ roughness: 1, flatShading: true }));
 const broad = spots.filter(s => !s[2]), ced = spots.filter(s => s[2]);
@@ -463,10 +538,11 @@ const crown = new THREE.InstancedMesh(clump, leafM, broad.length), cedar = new T
 const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.16, 0.26, 1, 5), new THREE.MeshStandardMaterial({ color: '#4a3a2a' }), spots.length);
 const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), tint = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
 let ti = 0;
-const PALM = S.vegetation === 'tropical' || S.vegetation === 'palm', ACACIA = S.vegetation === 'savanna';   // 17 Nov 2026
-broad.forEach(([x, y, , garden], i) => {
+const PALM0 = S.vegetation === 'tropical' || S.vegetation === 'palm' || HOTDESERT, ACACIA = S.vegetation === 'savanna';   // hot deserts: date palms (18 Nov 2026)   // 17 Nov 2026
+broad.forEach(([x, y, , garden, palm], i) => {
+  const PALM = PALM0 || !!palm;
   const s = (garden ? 1.6 : 2.2) + rnd() * 1.8, g = gh(x, y); Q.setFromAxisAngle(up, rnd() * 6.28);
-  if ((PALM && (garden || rnd() < 0.35)) || ACACIA) {   // palm: tall thin trunk, flat crown of fronds; acacia: short trunk, wide flat crown
+  if ((PALM && (garden || palm || HOTDESERT || rnd() < 0.35)) || ACACIA) {   // palm: tall thin trunk, flat crown of fronds; acacia: short trunk, wide flat crown
     const h = PALM ? 6 + rnd() * 5 : 2.6 + rnd() * 1.5, cs = PALM ? s * 1.1 : s * 1.5;
     M4.compose(new THREE.Vector3(x, g + h + 0.3, -y), Q, new THREE.Vector3(cs, cs * (PALM ? 0.32 : 0.38), cs)); crown.setMatrixAt(i, M4);
     crown.setColorAt(i, tint.setHSL(PALM ? 0.26 + rnd() * 0.05 : 0.2 + rnd() * 0.05, PALM ? 0.5 : 0.32, PALM ? 0.16 + rnd() * 0.05 : 0.14 + rnd() * 0.05));
@@ -485,7 +561,36 @@ ced.forEach(([x, y], i) => {
 });
 for (const m of [crown, cedar]) m.castShadow = m.receiveShadow = true;
 scene.add(crown, cedar, trunk);
-tris += broad.length * 320 + ced.length * 42;
+// ---------- ground cover by land cover: shrubs and stones between the houses and across open ground (18 Nov 2026) ----------
+let nShrub = 0, nStone = 0;
+if (LCN && MK) {
+  const SH = { 20: 1.3, 30: 0.1 + 0.25 * DRY, 60: 0.07, 90: 0.45, 100: 0.1, 50: 0.06, 10: 0.12 }, ST = { 60: 0.55, 30: 0.12 * DRY, 20: 0.15, 100: 0.35, 50: 0.03 };
+  const sh = [], st = [], n = LCN.n, cell = LCN.size / n, lim = D.half + 150;
+  let eSh = 0, eSt = 0; for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) { const k = LCN.a[j * n + i]; if (Math.abs(-LCN.size / 2 + i * cell) <= lim && Math.abs(LCN.size / 2 - j * cell) <= lim) { eSh += SH[k] || 0; eSt += ST[k] || 0; } }
+  const fSh = Math.min(1, 12000 / Math.max(1, eSh)), fSt = Math.min(1, 8000 / Math.max(1, eSt));   // even thinning: a cap never leaves one side bare
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const k = LCN.a[j * n + i], x0 = -LCN.size / 2 + i * cell, y0 = LCN.size / 2 - j * cell;
+    if (Math.abs(x0) > lim || Math.abs(y0) > lim) continue;
+    for (let r = (SH[k] || 0) * fSh + rnd2(); r >= 1 && sh.length < 14000; r--) { const x = x0 + rnd2() * cell, y = y0 - rnd2() * cell; if (!(MK(x, y) & 5)) sh.push([x, y, k]); }
+    for (let r = (ST[k] || 0) * fSt + rnd2(); r >= 1 && st.length < 9000; r--) { const x = x0 + rnd2() * cell, y = y0 - rnd2() * cell; if (!(MK(x, y) & 1)) st.push([x, y, k]); }
+  }
+  const shM = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ roughness: 1, flatShading: true }), sh.length);
+  const stM = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ roughness: 0.95, flatShading: true }), st.length);
+  const SHC = mixC(hex(TROP ? '#3f6a2c' : '#4f6233'), hex('#7a7550'), DRY), STC = mixC(hex('#8a857c'), hex('#b49c78'), DRY);
+  sh.forEach(([x, y, k], i) => {
+    const w = (k === 20 ? 0.8 : 0.55) + rnd2() * 0.9, h = w * (0.55 + rnd2() * 0.35); Q.setFromAxisAngle(up, rnd2() * 6.28);
+    M4.compose(new THREE.Vector3(x, gh(x, y) + h * 0.55, -y), Q, new THREE.Vector3(w, h, w * (0.8 + rnd2() * 0.4))); shM.setMatrixAt(i, M4);
+    const v = 0.78 + rnd2() * 0.4; shM.setColorAt(i, tint.setRGB(SHC[0] * v / 255, SHC[1] * v / 255, SHC[2] * v / 255, THREE.SRGBColorSpace));
+  });
+  st.forEach(([x, y], i) => {
+    const w = 0.25 + rnd2() * rnd2() * 1.1; Q.setFromEuler(new THREE.Euler(rnd2(), rnd2() * 6.28, rnd2()));
+    M4.compose(new THREE.Vector3(x, gh(x, y) + w * 0.15, -y), Q, new THREE.Vector3(w, w * (0.45 + rnd2() * 0.3), w * (0.7 + rnd2() * 0.5))); stM.setMatrixAt(i, M4);
+    const v = 0.72 + rnd2() * 0.45; stM.setColorAt(i, tint.setRGB(STC[0] * v / 255, STC[1] * v / 255, STC[2] * v / 255, THREE.SRGBColorSpace));
+  });
+  for (const m of [shM, stM]) { m.receiveShadow = true; m.castShadow = false; scene.add(m); }
+  nShrub = sh.length; nStone = st.length; tris += nShrub * 20 + nStone * 36;
+}
+tris += broad.length * 80 + ced.length * 42;
 
 // ---------- mist over the low ground and drifting pollen near the viewer ----------
 const mistTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d'), r = g.createRadialGradient(64, 64, 0, 64, 64, 64); r.addColorStop(0, 'rgba(255,255,255,.55)'); r.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = r; g.fillRect(0, 0, 128, 128); return new THREE.CanvasTexture(c); })();
@@ -507,7 +612,14 @@ if (D.sea) {
   ng.putImageData(im, 0, 0); const nt = new THREE.CanvasTexture(nc); nt.wrapS = nt.wrapT = THREE.RepeatWrapping; nt.repeat.set(220, 220);
   const pm = new THREE.PMREMGenerator(renderer), envScene = new THREE.Scene(); envScene.add(sky.clone());
   const wmat = new THREE.MeshPhysicalMaterial({ color: col(D.sea.colour), roughness: 0.28, metalness: 0.0, normalMap: nt, normalScale: new THREE.Vector2(0.22, 0.22), envMap: pm.fromScene(envScene).texture, envMapIntensity: 0.45, transparent: true, opacity: 0.96 });
-  const wm = new THREE.Mesh(new THREE.PlaneGeometry(16000, 16000), wmat); wm.rotation.x = -Math.PI / 2; wm.position.y = D.sea.level - BASE + 0.15; wm.receiveShadow = true; scene.add(wm);
+  const LAKE = D.sea.mask && LCN;   // a lake is drawn only where the satellite sees water (accuracy review, 18 Nov 2026); the sea runs to the horizon
+  if (LAKE) {
+    const n = LCN.n, c = document.createElement('canvas'); c.width = c.height = n; const g = c.getContext('2d'), im = g.createImageData(n, n);
+    for (let i = 0; i < n * n; i++) { const w = LCN.a[i] === 80 || LCN.a[i] === 0 ? 255 : 0; im.data[i * 4] = im.data[i * 4 + 1] = im.data[i * 4 + 2] = w; im.data[i * 4 + 3] = 255; }
+    g.putImageData(im, 0, 0); const big = document.createElement('canvas'); big.width = big.height = 1024; const bg = big.getContext('2d'); bg.imageSmoothingEnabled = true; bg.imageSmoothingQuality = 'high'; bg.drawImage(c, 0, 0, 1024, 1024);
+    wmat.alphaMap = new THREE.CanvasTexture(big); wmat.transparent = true; wmat.opacity = 0.97; nt.repeat.set(220 * LCN.size / 16000, 220 * LCN.size / 16000);
+  }
+  const wm = new THREE.Mesh(new THREE.PlaneGeometry(LAKE ? LCN.size : 16000, LAKE ? LCN.size : 16000), wmat); wm.rotation.x = -Math.PI / 2; wm.position.y = D.sea.level - BASE + 0.15; wm.receiveShadow = true; scene.add(wm);
   window.procWater = wm; WATER = wmat;
 }
 // ---------- view ----------
@@ -521,6 +633,12 @@ const MOODS = {
   dusk:   { el: -3, az: -108, col: '#8a7aa0', I: 0.0, hemi: 0.32, sky: [4, 1.2], fog: '#3a4152', dens: 0.00034, exp: 1.3, win: 1.0,  mist: 0.6 },
   night:  { el: -16, az: -100, col: '#8fa3cc', I: 0.32, hemi: 0.16, sky: [2, 0.5], fog: '#0f131b', dens: 0.0003, exp: 1.45, win: 1.25, mist: 0.3 },
 };
+// the day and golden hour take the climate's haze and bounce light: dust in deserts, damp air in the tropics, cool air in the mountains (18 Nov 2026)
+if (DRY >= 0.7) { Object.assign(MOODS.day, { fog: '#d5cab5', dens: 0.0003, col: '#ffe9cc' }); MOODS.golden.fog = '#dcb98f'; }
+else if (TROP) Object.assign(MOODS.day, { fog: '#c2cfc7', dens: 0.00034 });
+else if (COLD) Object.assign(MOODS.day, { fog: '#c4d1dd' });
+Object.assign(MOODS.day, { hemi: 0.85, I: 3.4 });   // a little more shaping light and less flat fill
+hemi.groundColor.set(DRY >= 0.7 ? '#8a7a5a' : TROP ? '#47552f' : '#4d4a36');
 let MOOD = MOODS.day;
 function applyMood(m) {
   MOOD = m; const sp = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - m.el), THREE.MathUtils.degToRad(m.az));
@@ -711,6 +829,15 @@ addEventListener('keydown', e => { if (e.key === 'Escape' && parent !== window) 
 applyMood(MOODS.day);
 const composer = new EffectComposer(renderer); composer.addPass(new RenderPass(scene, camera));   // soft contact shading, then tone mapping
 const ao = new GTAOPass(scene, camera, innerWidth, innerHeight); ao.updateGtaoMaterial({ radius: 6, distanceExponent: 1.4, thickness: 2, scale: 1.2 }); ao.blendIntensity = 0.85; composer.addPass(ao);
+const GRADE = DRY >= 0.7 ? { sat: 0.96, gain: [1.03, 1.0, 0.94] } : TROP ? { sat: 1.08, gain: [0.98, 1.02, 0.98] } : COLD ? { sat: 1.0, gain: [0.97, 1.0, 1.04] } : { sat: 1.05, gain: [1.01, 1.0, 0.98] };
+const grade = new ShaderPass({   // colour grade per climate and a soft vignette, before tone mapping (18 Nov 2026)
+  uniforms: { tDiffuse: { value: null }, uSat: { value: GRADE.sat }, uGain: { value: new THREE.Vector3(...GRADE.gain) }, uVig: { value: 0.2 } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: 'uniform sampler2D tDiffuse; uniform float uSat; uniform vec3 uGain; uniform float uVig; varying vec2 vUv;\n' +
+    'void main() { vec4 c = texture2D(tDiffuse, vUv); float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722)); c.rgb = mix(vec3(l), c.rgb, uSat) * uGain;\n' +
+    ' float d = distance(vUv, vec2(0.5)); c.rgb *= 1.0 - uVig * smoothstep(0.35, 0.85, d); gl_FragColor = c; }'
+});
+composer.addPass(grade);
 composer.addPass(new OutputPass());
 const tBuild = performance.now();
 document.getElementById('load').remove();
@@ -729,11 +856,11 @@ const statsEl = document.getElementById('stats');
 let fps = 0, frames = 0, tf = performance.now();
 function stats() {
   statsEl.innerHTML = [['Downloaded', `${fmtN(Math.round(bytes / 1024))} KB of data (about ${fmtN(Math.round(bytes / 1024 / 2.1))} KB compressed)`],
-    ['Generated in', `${fmtN(Math.round(tBuild - tFetch))} ms`], ['Buildings', `${fmtN(nB)} (${nLand} temples, shrines and halls)`], ['Trees', fmtN(spots.length) + ` (${fmtN(ced.length)} cedars, ${fmtN(GARDEN.length)} in gardens)`],
+    ['Generated in', `${fmtN(Math.round(tBuild - tFetch))} ms`], ['Buildings', `${fmtN(nB)} (${nLand} temples, shrines and halls)`], ['Ground cover', `${fmtN(nShrub)} shrubs, ${fmtN(nStone)} stones; land cover ${LCN ? 'ESA WorldCover' : 'none'}, climate ${KG || 'unknown'}`], ['Trees', fmtN(spots.length) + ` (${fmtN(lcTrees)} from land cover, ${fmtN(ced.length)} cedars, ${fmtN(GARDEN.length)} in gardens)`],
     ['Frame rate', fps ? fps + ' fps' + (quality.low ? ' (contact shading off on this device)' : '') : '…']].map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join('');
 }
 stats();
-window.procInfo = () => ({ bytes, genMs: Math.round(tBuild - tFetch), buildings: nB, landmarks: nLand, trees: spots.length, fps, aoOff: !!quality.low });
+window.procInfo = () => ({ bytes, genMs: Math.round(tBuild - tFetch), buildings: nB, landmarks: nLand, trees: spots.length, noTower: nNoTower, lake: !!(D.sea && D.sea.mask), lcTrees, shrubs: nShrub, stones: nStone, climate: KG, fps, aoOff: !!quality.low });
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
 const qt = []; let qLast = 0, qDone = false;
 function quality(now) {
