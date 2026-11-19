@@ -58,6 +58,9 @@
   #panel .wk a { color: var(--acc); }
   @media (max-width: 560px) { #panel { top: auto; bottom: 86px; right: 8px; left: 8px; width: auto; } .poi.minor { display: none; } }
 </style>
+<!-- the import map comes before every modulepreload (19 Nov 2026): a preload served from the cache, as on the second 3D view of a visit,
+     starts module loading before a later import map is read, so the map was ignored and "three" could not be resolved (black screen) -->
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }</script>
 <!-- faster start on slow connections (16 Nov 2026, measured over a roaming hotspot): every three.js module is requested at once instead of in two
      waves, and the village data starts downloading before the modules have arrived; online the encrypted copy is fetched directly -->
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js" crossorigin>
@@ -78,7 +81,6 @@
 <script>window.m3dPre = (() => { const s = (new URLSearchParams(location.search).get('m') || 'asuka').replace(/[^a-z0-9-]/g, ''), gh = /\.github\.io$/.test(location.hostname);
   const f = n => fetch(gh ? '/btv-explorer-models/' + n + '.enc' : n).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null);
   return { gh, files: { [s + '.proc.json']: f(s + '.proc.json'), [s + '.pois.json']: f(s + '.pois.json') } }; })();</script>
-<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }</script>
 </head>
 <body>
 <div id="load"><span id="loadTxt">…</span></div>
