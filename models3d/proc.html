@@ -420,7 +420,6 @@ let nNoTower = 0; const MAPPED_TOWERS =D.b.filter(b => b[3] === 3).map(([f]) => 
 for (let [flat, hMapped, lv, kind] of D.b) {
   let pts = []; for (let i = 0; i < flat.length; i += 2) pts.push([flat[i] / 4, flat[i + 1] / 4]);
   if (pts.length < 3) continue;
-  if (LMP.length && inLM(pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length)) continue;   // the landmark stands here
   let A = 0; for (let i = 0; i < pts.length; i++) { const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length]; A += x1 * y2 - x2 * y1; }
   if (A < 0) pts.reverse(); A = Math.abs(A) / 2; if (A < 6) continue;
   let gmin = 1e9, gmax = -1e9; for (const [x, y] of pts) { const h = gh(x, y); gmin = Math.min(gmin, h); gmax = Math.max(gmax, h); }
@@ -692,7 +691,10 @@ const PSTR = {
 };
 const LANG = PSTR[q.get('lang')] ? q.get('lang') : 'en', PT = PSTR[LANG], fmt = (s, ...a) => s.replace(/\{(\d)\}/g, (_, i) => a[i]);
 const $ = id => document.getElementById(id), reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-const groundAt = (x, z) => gh(x, -z);   // three.js z is minus north
+// a hero landmark can raise the ground for labels, tour cameras and the line-of-sight test (AlUla's castle rock, 19 Nov 2026):
+// lift [x, y, r0, r1, h] = full height h within r0 of (x, y), none beyond r1
+const LIFT = (D.lmk && D.lmk.lift) || [];
+const groundAt = (x, z) => { const g = gh(x, -z); let h = g; for (const [lx, ly, r0, r1, lh] of LIFT) { const d = Math.hypot(x - lx, -z - ly); if (d < r1) h = Math.max(h, g + lh * Math.min(1, (r1 - d) / (r1 - r0))); } return h; };   // three.js z is minus north
 const M = { btv: D.btv };
 const SLUG = slug;
 const host = (() => { try { return parent !== window && parent.m3dHost ? parent.m3dHost : null; } catch (e) { return null; } })();
@@ -861,10 +863,14 @@ if (D.lmk) {
       if (!o.isMesh) return;
       const g = (o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone()).applyMatrix4(o.matrixWorld), p = g.attributes.position;
       for (let i = 0; i < p.count; i++) p.setY(i, p.getY(i) + gh(p.getX(i), -p.getZ(i)));
+      g.computeVertexNormals();   // files carry no normals: flat normals per triangle, after draping
       const k = o.material.name; if (!byMat.has(k)) byMat.set(k, { c: o.material.color.clone(), gs: [] }); byMat.get(k).gs.push(g);
     });
     for (const [, { c, gs }] of byMat) {
-      const m = new THREE.Mesh(mergeGeoms(gs), new THREE.MeshStandardMaterial({ color: c, roughness: 0.95, flatShading: true }));
+      const n = gs.reduce((a, g) => a + g.attributes.position.array.length, 0), pos = new Float32Array(n), nor = new Float32Array(n); let o = 0;
+      for (const g of gs) { pos.set(g.attributes.position.array, o); nor.set(g.attributes.normal.array, o); o += g.attributes.position.array.length; }   // typed copies: a spread of a large town overflows
+      const mg = new THREE.BufferGeometry(); mg.setAttribute('position', new THREE.BufferAttribute(pos, 3)); mg.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+      const m = new THREE.Mesh(mg, new THREE.MeshStandardMaterial({ color: c, roughness: 0.95, flatShading: true }));
       m.castShadow = m.receiveShadow = true; scene.add(m); nLmk += m.geometry.attributes.position.count / 3;
     }
   } catch (e) { console.warn('landmark not loaded', e); }
