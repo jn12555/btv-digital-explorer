@@ -133,6 +133,9 @@ async function m3dGet(name, type) {   // plain file locally; online the encrypte
 const t0 = performance.now();
 let D; try { D = await m3dGet(slug + '.proc.json', 'json'); } catch (e) { document.getElementById('loadTxt').textContent = T.missing; throw e; }
 const S = D.style, bytes = JSON.stringify(D).length;
+// a hero landmark's loader and file start downloading now, while the village is generated (19 Nov 2026: Siwa waited 1.6 s for them at the end)
+const LMK_PRE = D.lmk && !q.has('nolmk') ? Promise.all([import('three/addons/loaders/GLTFLoader.js'), m3dGet(D.lmk.file, 'buf')]) : null;
+if (LMK_PRE) LMK_PRE.catch(() => {});
 const tFetch = performance.now();
 
 // ---------- seeded random ----------
@@ -856,7 +859,7 @@ composer.addPass(new OutputPass());
 let nLmk = 0;
 if (D.lmk) {
   try {
-    const [{ GLTFLoader }, buf] = await Promise.all([import('three/addons/loaders/GLTFLoader.js'), m3dGet(D.lmk.file, 'buf')]);
+    const [{ GLTFLoader }, buf] = await (LMK_PRE || Promise.all([import('three/addons/loaders/GLTFLoader.js'), m3dGet(D.lmk.file, 'buf')]));
     const gl = await new GLTFLoader().parseAsync(buf, ''); gl.scene.updateMatrixWorld(true);
     const byMat = new Map();
     gl.scene.traverse(o => {
