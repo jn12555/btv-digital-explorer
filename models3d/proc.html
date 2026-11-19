@@ -411,10 +411,16 @@ function roundHut(pts, base, wc) {   // round house: a drum of mud or plaster un
   walls(ring(cx, cy, r, 12), base, g + 0.15, top, 1, wc, 0);
   coneB(THATCH, cx, cy, r + 0.75, top - 0.25, top + r * 1.05 + 0.6, 14, col([158, 138, 98]), 1.2);
 }
-let nNoTower = 0; const MAPPED_TOWERS = D.b.filter(b => b[3] === 3).map(([f]) => { let x = 0, y = 0; for (let i = 0; i < f.length; i += 2) { x += f[i] / 4; y += f[i + 1] / 4; } return [x / (f.length / 2), y / (f.length / 2)]; });
+// hero landmark (Blender, 19 Nov 2026): its ground is left to it, so no generated house, tree, shrub or stone stands inside the mask
+if (q.has('nolmk')) delete D.lmk;   // review switch: the village as generated without its hero landmark
+const LMP = ((D.lmk && D.lmk.mask) || []).map(p => p.flatMap(([x, y]) => [x * 4, y * 4]));   // same x4 fixed point as the pack's outlines
+const inLM = (x, y) => LMP.some(f => inPolyQ(x, y, f));
+function inPolyQ(x, y, f) { let c = false; for (let i = 0, j = f.length - 2; i < f.length; j = i, i += 2) { const xi = f[i] / 4, yi = f[i + 1] / 4, xj = f[j] / 4, yj = f[j + 1] / 4; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; }
+let nNoTower = 0; const MAPPED_TOWERS =D.b.filter(b => b[3] === 3).map(([f]) => { let x = 0, y = 0; for (let i = 0; i < f.length; i += 2) { x += f[i] / 4; y += f[i + 1] / 4; } return [x / (f.length / 2), y / (f.length / 2)]; });
 for (let [flat, hMapped, lv, kind] of D.b) {
   let pts = []; for (let i = 0; i < flat.length; i += 2) pts.push([flat[i] / 4, flat[i + 1] / 4]);
   if (pts.length < 3) continue;
+  if (LMP.length && inLM(pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length)) continue;   // the landmark stands here
   let A = 0; for (let i = 0; i < pts.length; i++) { const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length]; A += x1 * y2 - x2 * y1; }
   if (A < 0) pts.reverse(); A = Math.abs(A) / 2; if (A < 6) continue;
   let gmin = 1e9, gmax = -1e9; for (const [x, y] of pts) { const h = gh(x, y); gmin = Math.min(gmin, h); gmax = Math.max(gmax, h); }
@@ -502,6 +508,7 @@ for (const f of D.w) {
   for (let k = 0; k < want && spots.length < 16000; k++) { const x = x0 + rnd() * (x1 - x0), y = y0 + rnd() * (y1 - y0); if (Math.abs(x) < D.half + 150 && Math.abs(y) < D.half + 150 && inPoly(x, y, f)) spots.push([x, y, rnd() < (['tropical', 'palm', 'savanna'].includes(S.vegetation) ? 0 : 0.45) ? 1 : 0]);   /* no conifers in tropical or savanna woods */ }
 }
 for (const g of GARDEN) spots.push([g[0], g[1], 0, 1]);
+if (LMP.length) for (let i = spots.length; i--;) if (inLM(spots[i][0], spots[i][1])) spots.splice(i, 1);   // no trees inside the landmark's ground
 // mask at 2.5 m: red = building, road or water (nothing grows), green = mapped wood, blue = mapped field
 const MK = (() => {
   if (!LCN) return null;
@@ -512,6 +519,7 @@ const MK = (() => {
   g.fillStyle = '#0000ff'; for (const [f] of D.f) { pl(f); g.fill(); }
   g.fillStyle = g.strokeStyle = '#ff0000'; g.lineCap = g.lineJoin = 'round';
   for (const [f] of D.b) { pl(f); g.fill(); g.lineWidth = 2.5 / 2.5 * 2; g.stroke(); }
+  for (const f of LMP) { pl(f); g.fill(); }   // the landmark's ground: no land-cover trees, shrubs or stones
   for (const [f, w] of D.r) { pl(f, false); g.lineWidth = (w + 1.5) / 2.5; g.stroke(); }
   for (const [f, line] of D.water) { if (line) { pl(f, false); g.lineWidth = 6 / 2.5; g.stroke(); } else { pl(f); g.fill(); } }
   const d = g.getImageData(0, 0, n, n).data;
@@ -841,6 +849,26 @@ const grade = new ShaderPass({   // colour grade per climate and a soft vignette
 });
 composer.addPass(grade);
 composer.addPass(new OutputPass());
+// ---------- hero landmark (Blender, 19 Nov 2026; tools/model3d/landmarks): heights in the file are above the local ground, so every vertex
+// is draped on this village's own terrain; parts are merged by material into one mesh each. The village stands without it if it fails.
+let nLmk = 0;
+if (D.lmk) {
+  try {
+    const [{ GLTFLoader }, buf] = await Promise.all([import('three/addons/loaders/GLTFLoader.js'), m3dGet(D.lmk.file, 'buf')]);
+    const gl = await new GLTFLoader().parseAsync(buf, ''); gl.scene.updateMatrixWorld(true);
+    const byMat = new Map();
+    gl.scene.traverse(o => {
+      if (!o.isMesh) return;
+      const g = (o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone()).applyMatrix4(o.matrixWorld), p = g.attributes.position;
+      for (let i = 0; i < p.count; i++) p.setY(i, p.getY(i) + gh(p.getX(i), -p.getZ(i)));
+      const k = o.material.name; if (!byMat.has(k)) byMat.set(k, { c: o.material.color.clone(), gs: [] }); byMat.get(k).gs.push(g);
+    });
+    for (const [, { c, gs }] of byMat) {
+      const m = new THREE.Mesh(mergeGeoms(gs), new THREE.MeshStandardMaterial({ color: c, roughness: 0.95, flatShading: true }));
+      m.castShadow = m.receiveShadow = true; scene.add(m); nLmk += m.geometry.attributes.position.count / 3;
+    }
+  } catch (e) { console.warn('landmark not loaded', e); }
+}
 const tBuild = performance.now();
 document.getElementById('load').remove();
 document.getElementById('hud').hidden = !q.has('debug');   // figures for development only
@@ -866,7 +894,7 @@ function stats() {
     ['Frame rate', fps ? fps + ' fps' + (quality.low ? ' (contact shading off on this device)' : '') : '…']].map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join('');
 }
 stats();
-window.procInfo = () => ({ bytes, genMs: Math.round(tBuild - tFetch), buildings: nB, landmarks: nLand, trees: spots.length, noTower: nNoTower, lake: !!(D.sea && D.sea.mask), lcTrees, shrubs: nShrub, stones: nStone, climate: KG, fps, aoOff: !!quality.low });
+window.procInfo = () => ({ bytes, genMs: Math.round(tBuild - tFetch), buildings: nB, landmarks: nLand, heroTris: nLmk,trees: spots.length, noTower: nNoTower, lake: !!(D.sea && D.sea.mask), lcTrees, shrubs: nShrub, stones: nStone, climate: KG, fps, aoOff: !!quality.low });
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
 const qt = []; let qLast = 0, qDone = false;
 function quality(now) {
