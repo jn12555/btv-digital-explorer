@@ -12,19 +12,23 @@
   :root { --bg: #0e1113; --fg: #e3e7ea; --mute: #9aa3aa; --line: rgba(255,255,255,.14); --chip: rgba(18,22,25,.72); --acc: #e0b25a; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
   canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  body::before, body::after { content: ''; position: fixed; left: 0; right: 0; pointer-events: none; z-index: 1; }   /* the same phone layout as proc.html (21 Nov 2026) */
+  body::before { top: 0; height: 110px; background: linear-gradient(rgba(8,10,12,.5), rgba(8,10,12,0)); }
+  body::after { bottom: 0; height: 70px; background: linear-gradient(rgba(8,10,12,0), rgba(8,10,12,.45)); }
+  html.framed #top { right: 62px; }
   .bar { position: absolute; left: 12px; right: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; pointer-events: none; }
   .bar > * { pointer-events: auto; }
   #top { top: 12px; }
   #bottom { bottom: 10px; flex-direction: column; align-items: stretch; gap: 6px; }
   h1 { font-size: 16px; margin: 0 8px 0 0; font-weight: 650; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
-  h1 small { display: block; font-weight: 400; color: var(--mute); font-size: 12px; }
+  h1 small { display: block; font-weight: 400; color: #c9d0d4; font-size: 12px; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
   .grp { display: flex; gap: 0; background: var(--chip); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; backdrop-filter: blur(6px); }
   button { font: inherit; color: var(--fg); background: transparent; border: 0; padding: 6px 12px; cursor: pointer; min-height: 32px; }
   button[aria-pressed="true"] { background: rgba(255,255,255,.16); }
   button:focus-visible { outline: 2px solid var(--acc); outline-offset: -2px; }
   .note { background: var(--chip); border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; font-size: 12px; color: var(--mute); backdrop-filter: blur(6px); }
   .note b { color: var(--fg); font-weight: 600; }
-  .credit { font-size: 11px; color: var(--mute); text-align: center; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
+  .credit { font-size: 11px; color: var(--mute); text-align: center; text-shadow: 0 1px 2px rgba(0,0,0,.7); min-width: 0; overflow-wrap: anywhere; }
   #load[hidden] { display: none; }
   #load { position: absolute; inset: 0; display: grid; place-items: center; color: var(--mute); font-size: 13px; }
   #load div { width: min(260px, 70vw); }
@@ -55,8 +59,12 @@
   #panel .wk p { margin: 0 0 4px; }
   #panel .wk small { color: var(--mute); font-size: 11px; display: block; }
   #panel .wk a { color: var(--acc); }
-  @media (max-width: 560px) { #panel { top: auto; bottom: 86px; right: 8px; left: 8px; width: auto; } .poi.minor { display: none; } }
-  @media (max-width: 560px) { h1 { width: 100%; } .note { font-size: 11px; } }
+  #panel { max-height: calc(100% - 140px); overflow-y: auto; overscroll-behavior: contain; }
+  @media (max-width: 560px) { #panel { top: auto; bottom: 78px; right: 8px; left: 8px; width: auto; max-height: calc(100% - 200px); } .poi.minor { display: none; } }
+  @media (max-height: 500px) { #panel { top: 52px; max-height: calc(100% - 124px); } }
+  @media (max-width: 560px) { h1 { width: 100%; } }
+  @media (max-width: 560px), (max-height: 500px) { .note { font-size: 11px; cursor: pointer; padding: 5px 9px; } .note:not(.open) .more, .note:not(.open) .mach { display: none; } .note:not(.open)::after { content: ' …'; }
+    #bottom:not(.open) .credit { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; } }
 </style>
 </head>
 <body>
@@ -74,6 +82,7 @@
   <div class="note" id="note"></div>
   <div class="credit" id="credit"></div>
 </div>
+<script>try { if (window.top !== window) document.documentElement.classList.add('framed'); } catch (_) { document.documentElement.classList.add('framed'); }</script>
 <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }</script>
 <script type="module">
 import * as THREE from 'three';
@@ -133,7 +142,8 @@ const M = SLUG ? await m3dGet(`${SLUG}.json`, 'json').catch(() => null) : null;
 if (M) { M.name = M.btv; M.file = `${SLUG}.glb`; M.glow = M.glow || [-0.9, 0, 0.4]; }
 document.documentElement.lang = LANG; if (LANG === 'ar') document.documentElement.dir = 'rtl';
 const $ = id => document.getElementById(id);
-$('loadTxt').textContent = T.load; $('rainBtn').textContent = T.rain; $('resetBtn').textContent = T.reset; $('note').innerHTML = T.note;
+$('loadTxt').textContent = T.load; $('rainBtn').textContent = T.rain; $('resetBtn').textContent = T.reset; $('note').innerHTML = T.note.replace(/<\/b>\s*/, '</b> <span class="more">') + '</span>';
+$('note').onclick = e => { if (!e.target.closest('a')) { e.currentTarget.classList.toggle('open'); $('bottom').classList.toggle('open', e.currentTarget.classList.contains('open')); } };   // phones: tap to read the whole note and credit
 if (!M) { $('loadTxt').textContent = T.missing; throw new Error('unknown model'); }
 $('title').textContent = M.name; $('title').insertAdjacentHTML('beforeend', '<small></small>'); $('title').querySelector('small').textContent = `${q.get('c') || M.country} · ${T.pilot}`; $('credit').textContent = M.credit;
 document.title = `${M.name} · ${T.pilot}`;
@@ -477,6 +487,7 @@ function updatePois() {
   }
   if (!poiOn || !poiEls.length) return;
   const w = innerWidth, h = innerHeight, v = new THREE.Vector3(), occ = (++occT % 12) === 0, placed = [];
+  const topB = $('top').getBoundingClientRect().bottom + 4, botT = $('bottom').getBoundingClientRect().top - 4, pan = $('panel').hidden ? null : $('panel').getBoundingClientRect();   // labels stay clear of the bars and the panel (21 Nov 2026)
   for (const [p, b] of poiEls) {   // in rank order (build_pois.py sorts castles, gates and churches first): a label that would overlap one already placed waits
     v.copy(p.pos).project(camera); const d = camera.position.distanceTo(p.pos);
     const near = MAJOR.has(p.kind) ? d < 1600 : d < 420;
@@ -488,7 +499,9 @@ function updatePois() {
     const sx = (v.x + 1) / 2 * w, sy = (1 - v.y) / 2 * h;
     if (show) {
       const bw = b._w || (b._w = Math.min(230, dn(p).length * 6.6 + 20)), r = [sx - bw / 2 - 3, sy - 38, sx + bw / 2 + 3, sy - 14];
-      if (!b.classList.contains('sel') && placed.some(q => r[0] < q[2] && r[2] > q[0] && r[1] < q[3] && r[3] > q[1])) show = false; else placed.push(r);
+      if (r[1] < topB || sy > botT || (pan && sx > pan.left - 6 && sx < pan.right + 6 && sy - 38 < pan.bottom && sy > pan.top)) show = false;
+      else if (!b.classList.contains('sel') && placed.some(q => r[0] < q[2] && r[2] > q[0] && r[1] < q[3] && r[3] > q[1])) show = false; else placed.push(r);
+      const sh = Math.max(0, 6 - r[0]) - Math.max(0, r[2] - (w - 6)), sp = b.firstElementChild; if (sp) sp.style.transform = sh ? `translateX(${sh}px)` : '';   // a label at the edge slides in; its pin stays on the place
     }
     b.style.display = show ? '' : 'none';
     if (show) b.style.transform = `translate(${sx}px, ${sy}px) translate(-50%, -100%)`;
@@ -504,7 +517,7 @@ let filmPath = null;
 if (FILM) {
   document.body.classList.add('film');
   const st = document.createElement('style');
-  st.textContent = `body.film #top, body.film #bottom, body.film #pois, body.film #panel { display: none !important; }
+  st.textContent = `body.film #top, body.film #bottom, body.film #pois, body.film #panel, body.film::before, body.film::after { display: none !important; }
     #filmUI { position: absolute; inset: 0; pointer-events: none; font-family: system-ui, "Segoe UI", sans-serif; }
     #filmUI::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 34%; background: linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0)); }
     #filmUI .cap { position: absolute; left: 5%; bottom: 13%; color: #fff; text-shadow: 0 2px 10px rgba(0,0,0,.65); transition: none; }

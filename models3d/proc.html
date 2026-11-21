@@ -8,18 +8,23 @@
   :root { --bg: #0f1214; --ink: #f2efe8; --mute: #a9b0b4; --panel: rgba(16, 19, 22, .78); }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
   canvas { display: block; }
+  body::before, body::after { content: ''; position: fixed; left: 0; right: 0; pointer-events: none; z-index: 1; }
+  body::before { top: 0; height: 110px; background: linear-gradient(rgba(8,10,12,.5), rgba(8,10,12,0)); }
+  body::after { bottom: 0; height: 70px; background: linear-gradient(rgba(8,10,12,0), rgba(8,10,12,.45)); }
+  html.framed #top { right: 62px; }   /* inside the Explorer, the close button sits at the top right */
   .bar { position: absolute; left: 12px; right: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; pointer-events: none; z-index: 2; }
   .bar > * { pointer-events: auto; }
   #top { top: 12px; } #bottom { bottom: 10px; flex-direction: column; align-items: stretch; gap: 6px; }
   h1 { font-size: 16px; margin: 0 8px 0 0; font-weight: 650; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
-  h1 small { display: block; font-weight: 400; color: var(--mute); font-size: 12px; }
+  h1 small { display: block; font-weight: 400; color: #c9d0d4; font-size: 12px; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
   .note { background: var(--chip); border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; font-size: 12px; color: var(--mute); backdrop-filter: blur(6px); }
   .note b { color: var(--fg); font-weight: 600; }
   .mach { margin-top: 3px; font-size: 11.5px; color: var(--mute); }
-  .credit { font-size: 11px; color: var(--mute); text-align: center; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
+  .credit { font-size: 11px; color: var(--mute); text-align: center; text-shadow: 0 1px 2px rgba(0,0,0,.7); min-width: 0; overflow-wrap: anywhere; }
   button:focus-visible { outline: 2px solid var(--acc); outline-offset: -2px; }
-  @media (max-width: 560px) { h1 { width: 100%; } .note { font-size: 11px; cursor: pointer; } .note:not(.open) .more, .note:not(.open) .mach { display: none; } .note:not(.open)::after { content: ' …'; }
-    #bottom:not(.open) .credit { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } }   /* phones: the credit keeps one line (OpenStreetMap first), the whole of it with the note */
+  @media (max-width: 560px) { h1 { width: 100%; } }
+  @media (max-width: 560px), (max-height: 500px) { .note { font-size: 11px; cursor: pointer; padding: 5px 9px; } .note:not(.open) .more, .note:not(.open) .mach { display: none; } .note:not(.open)::after { content: ' …'; }
+    #bottom:not(.open) .credit { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; } }   /* phones: the credit keeps one line (OpenStreetMap first), the whole of it with the note */
   #lost { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; background: #0e1113; color: #e3e7ea; font-size: 15px; line-height: 1.5; z-index: 20; }
   #hud { position: fixed; right: 12px; bottom: 90px; max-width: min(460px, calc(100vw - 32px)); background: var(--panel); border-radius: 10px; padding: 12px 14px; backdrop-filter: blur(6px); }
   #hud h1 { font-size: 16px; margin: 0 0 2px; font-weight: 600; }
@@ -27,9 +32,11 @@
   #hud dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0; font-variant-numeric: tabular-nums; }
   #hud dt { color: var(--mute); }
   #hud dd { margin: 0; }
-  #note { position: fixed; left: 16px; bottom: 12px; right: 16px; color: var(--mute); font-size: 12px; }
+  #note { color: var(--mute); font-size: 12px; }   /* in the bottom bar's flow, above the credit (21 Nov 2026: it was pinned over the credit) */
   #note b { color: var(--ink); font-weight: 600; }
-  #load { position: fixed; inset: 0; display: grid; place-items: center; color: var(--mute); }
+  #load { position: fixed; inset: 0; display: grid; place-items: center; color: var(--mute); padding: 24px; text-align: center; }
+  #loadMore { margin-top: 10px; font-size: 12px; max-width: 460px; color: var(--mute); }
+  #loadMore.on { color: #e3e7ea; }
   :root { --fg: var(--ink); --chip: rgba(16,19,22,.72); --line: rgba(255,255,255,.18); --acc: #8fc1f0; }
   button { font: inherit; color: var(--fg); background: transparent; border: 0; padding: 6px 12px; cursor: pointer; min-height: 32px; }
   button[aria-pressed="true"] { background: rgba(255,255,255,.16); }
@@ -58,10 +65,13 @@
   #panel .wk p { margin: 0 0 4px; }
   #panel .wk small { color: var(--mute); font-size: 11px; display: block; }
   #panel .wk a { color: var(--acc); }
-  @media (max-width: 560px) { #panel { top: auto; bottom: 86px; right: 8px; left: 8px; width: auto; } .poi.minor { display: none; } }
+  #panel { max-height: calc(100% - 140px); overflow-y: auto; overscroll-behavior: contain; }
+  @media (max-width: 560px) { #panel { top: auto; bottom: 78px; right: 8px; left: 8px; width: auto; max-height: calc(100% - 200px); } .poi.minor { display: none; } }
+  @media (max-height: 500px) { #panel { top: 52px; max-height: calc(100% - 124px); } }
 </style>
 <!-- the import map comes before every modulepreload (19 Nov 2026): a preload served from the cache, as on the second 3D view of a visit,
      starts module loading before a later import map is read, so the map was ignored and "three" could not be resolved (black screen) -->
+<script>try { if (window.top !== window) document.documentElement.classList.add('framed'); } catch (_) { document.documentElement.classList.add('framed'); }</script>
 <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }</script>
 <!-- faster start on slow connections (16 Nov 2026, measured over a roaming hotspot): every three.js module is requested at once instead of in two
      waves, and the village data starts downloading before the modules have arrived; online the encrypted copy is fetched directly -->
@@ -85,7 +95,27 @@
   return { gh, files: { [s + '.proc.json']: f(s + '.proc.json'), [s + '.pois.json']: f(s + '.pois.json') } }; })();</script>
 </head>
 <body>
-<div id="load"><span id="loadTxt">…</span></div>
+<div id="load"><div><span id="loadTxt">…</span><div id="loadMore"></div></div></div>
+<script>
+// what the view is doing, and why it stops, in plain words (21 Nov 2026, Jost: the 3D view 'still does not work' on an Android phone):
+// this classic script runs even when the 3D modules cannot load, so a phone shows the step and the error instead of a black screen
+(() => {
+  const L = { en: { lib: 'Loading the 3D tools…', fail: 'The 3D view could not start.', nogl: 'This browser cannot show 3D graphics here (WebGL is off or unavailable). Try another browser, or turn on hardware acceleration in its settings.', slow: 'This is taking longer than usual.', hint: 'A screenshot of this screen helps find the cause.' },
+    fr: { lib: 'Chargement des outils 3D…', fail: 'La vue 3D n’a pas pu démarrer.', nogl: 'Ce navigateur ne peut pas afficher de graphismes 3D ici (WebGL est désactivé ou indisponible). Essayez un autre navigateur ou activez l’accélération matérielle dans ses réglages.', slow: 'Le chargement prend plus de temps que d’habitude.', hint: 'Une capture de cet écran aide à trouver la cause.' },
+    es: { lib: 'Cargando las herramientas 3D…', fail: 'La vista 3D no pudo iniciarse.', nogl: 'Este navegador no puede mostrar gráficos 3D aquí (WebGL está desactivado o no disponible). Pruebe otro navegador o active la aceleración por hardware en su configuración.', slow: 'Está tardando más de lo habitual.', hint: 'Una captura de esta pantalla ayuda a encontrar la causa.' },
+    ar: { lib: 'جارٍ تحميل أدوات العرض ثلاثي الأبعاد…', fail: 'تعذّر تشغيل العرض ثلاثي الأبعاد.', nogl: 'لا يستطيع هذا المتصفح عرض رسومات ثلاثية الأبعاد هنا (WebGL معطّل أو غير متاح). جرّب متصفحًا آخر أو فعّل تسريع العتاد في إعداداته.', slow: 'يستغرق التحميل وقتًا أطول من المعتاد.', hint: 'تساعد لقطة شاشة لهذه الرسالة على معرفة السبب.' } };
+  const lg = new URLSearchParams(location.search).get('lang'), S = L[lg] || L.en, txt = document.getElementById('loadTxt'), more = document.getElementById('loadMore');
+  txt.textContent = S.lib;
+  const show = (head, detail) => { const ld = document.getElementById('load'); if (!ld) return; txt.textContent = head; more.textContent = (detail ? detail + ' · ' : '') + S.hint; more.className = 'on'; window.m3dFailed = true; };
+  let gl = null; try { const c = document.createElement('canvas'); gl = c.getContext('webgl2') || c.getContext('webgl'); } catch (_) {}
+  if (!gl) show(S.nogl, '');
+  // the first clear message stays (no WebGL, no village file); a module that fails to load names the library host
+  addEventListener('error', e => { if (!document.getElementById('load') || window.m3dFailed) return; const t = e.target, mod = t && ((t.tagName === 'SCRIPT' && t.type === 'module') || (t.tagName === 'LINK' && t.rel === 'modulepreload'));
+    show(S.fail, mod ? 'the 3D library could not be downloaded (cdn.jsdelivr.net)' : (e.message || (t && t.src ? 'could not load ' + t.src.split('/').slice(-2).join('/') : 'error')) + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : '')); }, true);
+  addEventListener('unhandledrejection', e => { if (document.getElementById('load') && !window.m3dFailed) show(S.fail, String((e.reason && (e.reason.message || e.reason)) || 'error').slice(0, 200)); });
+  setTimeout(() => { if (document.getElementById('load') && !window.m3dFailed) { more.textContent = S.slow + ' (' + txt.textContent + ') ' + S.hint; more.className = 'on'; } }, 30000);
+})();
+</script>
 <div class="bar" id="top">
   <h1 id="title"></h1>
   <div class="grp" role="group" id="moods"></div>
@@ -120,7 +150,7 @@ const STR = {
 };
 const T = STR[STR[q.get('lang')] ? q.get('lang') : 'en'];
 document.documentElement.lang = STR[q.get('lang')] ? q.get('lang') : 'en'; if (q.get('lang') === 'ar') document.documentElement.dir = 'rtl';
-document.getElementById('loadTxt').textContent = T.load;
+if (!window.m3dFailed) document.getElementById('loadTxt').textContent = T.load;   // a message already shown (no WebGL) stays
 async function m3dGet(name, type) {   // plain file locally; online the encrypted copy, opened with the key the password page left for this tab (as viewer.html)
   const P = window.m3dPre || {}, early = P.files && P.files[name] ? await P.files[name] : null;   // started in the page head
   if (early && !P.gh) { const t = new TextDecoder().decode(early); return type === 'json' ? JSON.parse(t) : early; }
@@ -133,7 +163,8 @@ async function m3dGet(name, type) {   // plain file locally; online the encrypte
   return type === 'json' ? JSON.parse(new TextDecoder().decode(plain)) : plain;
 }
 const t0 = performance.now();
-let D; try { D = await m3dGet(slug + '.proc.json', 'json'); } catch (e) { document.getElementById('loadTxt').textContent = T.missing; throw e; }
+let D; try { D = await m3dGet(slug + '.proc.json', 'json'); } catch (e) {   // say why: no key in this tab ('locked'), no file, or a failed download
+  window.m3dFailed = true; document.getElementById('loadTxt').textContent = T.missing; const m = document.getElementById('loadMore'); m.textContent = String(e && e.message || e).slice(0, 160); m.className = 'on'; throw e; }
 const S = D.style, bytes = JSON.stringify(D).length;
 // a hero landmark's loader and file start downloading now, while the village is generated (19 Nov 2026: Siwa waited 1.6 s for them at the end)
 const LMK_PRE = D.lmk && !q.has('nolmk') ? Promise.all([import('three/addons/loaders/GLTFLoader.js'), m3dGet(D.lmk.file, 'buf')]) : null;
@@ -831,6 +862,7 @@ function updatePois() {
   }
   if (!poiOn || !poiEls.length) return;
   const w = innerWidth, h = innerHeight, v = new THREE.Vector3(), occ = (++occT % 12) === 0, placed = [];
+  const topB = $('top').getBoundingClientRect().bottom + 4, botT = $('bottom').getBoundingClientRect().top - 4, pan = $('panel').hidden ? null : $('panel').getBoundingClientRect();   // labels stay clear of the bars and the panel (21 Nov 2026)
   for (const [p, b] of poiEls) {   // in rank order (build_pois.py sorts castles, gates and churches first): a label that would overlap one already placed waits
     v.copy(p.pos).project(camera); const d = camera.position.distanceTo(p.pos);
     const near = MAJOR.has(p.kind) ? d < 1600 : d < 420;
@@ -842,7 +874,9 @@ function updatePois() {
     const sx = (v.x + 1) / 2 * w, sy = (1 - v.y) / 2 * h;
     if (show) {
       const bw = b._w || (b._w = Math.min(230, dn(p).length * 6.6 + 20)), r = [sx - bw / 2 - 3, sy - 38, sx + bw / 2 + 3, sy - 14];
-      if (!b.classList.contains('sel') && placed.some(q => r[0] < q[2] && r[2] > q[0] && r[1] < q[3] && r[3] > q[1])) show = false; else placed.push(r);
+      if (r[1] < topB || sy > botT || (pan && sx > pan.left - 6 && sx < pan.right + 6 && sy - 38 < pan.bottom && sy > pan.top)) show = false;
+      else if (!b.classList.contains('sel') && placed.some(q => r[0] < q[2] && r[2] > q[0] && r[1] < q[3] && r[3] > q[1])) show = false; else placed.push(r);
+      const sh = Math.max(0, 6 - r[0]) - Math.max(0, r[2] - (w - 6)), sp = b.firstElementChild; if (sp) sp.style.transform = sh ? `translateX(${sh}px)` : '';   // a label at the edge slides in; its pin stays on the place
     }
     b.style.display = show ? '' : 'none';
     if (show) b.style.transform = `translate(${sx}px, ${sy}px) translate(-50%, -100%)`;
