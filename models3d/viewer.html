@@ -308,7 +308,9 @@ const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.6, 0.5, 0.85); comp
 composer.addPass(new OutputPass());
 
 // ---------- moods and controls ----------
-const pmrem = new THREE.PMREMGenerator(renderer);
+const pmrem = new THREE.PMREMGenerator(renderer); let envRT = null;
+if (new URLSearchParams(location.search).has('debug')) window.__dbg = { renderer, scene };
+window.m3dRelease = () => { try { renderer.setAnimationLoop(null); renderer.dispose(); renderer.forceContextLoss(); } catch (_) {} };   // the Explorer frees the graphics memory at once when the 3D view closes (21 Nov 2026)   // development only (21 Nov 2026)
 function applyMood() {
   skyU.uHorizon.value.setRGB(...mood.horizon); skyU.uZenith.value.setRGB(...mood.zenith); skyU.uGlow.value.setRGB(...mood.glow);
   const fc = new THREE.Color(...mood.horizon).multiplyScalar(0.85);
@@ -318,7 +320,7 @@ function applyMood() {
   const r = rainOn ? mood.rain : 0; rainU.uAmt.value = r; waterU.uRain.value = r; rain.visible = r > 0;
   for (const l of lamps) l.intensity = 45 * mood.lamps;
   for (const [m, base] of glass) m.emissiveIntensity = base * mood.windows;   // lit windows fade by day
-  const s = new THREE.Scene(); s.add(sky.clone()); if (scene.environment) scene.environment.dispose(); scene.environment = pmrem.fromScene(s, 0, 1, 30000).texture;
+  const s = new THREE.Scene(); s.add(sky.clone()); const rt = pmrem.fromScene(s, 0, 1, 30000); if (envRT) envRT.dispose(); envRT = rt; scene.environment = rt.texture;   // free the previous render target, not only its texture (21 Nov 2026: one leaked per mood switch)
 }
 const moodsEl = $('moods');
 for (const k of ['day', 'golden', 'dusk', 'night']) {

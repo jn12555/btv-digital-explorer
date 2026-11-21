@@ -193,7 +193,8 @@ const gh = (x, y) => hAt(TN, x, y);
 const PHONE = (matchMedia('(pointer: coarse)').matches && Math.min(innerWidth, innerHeight) < 600) || (navigator.deviceMemory > 0 && navigator.deviceMemory <= 4) || q.has('phone');
 const renderer = new THREE.WebGLRenderer({ antialias: !PHONE, powerPreference: 'high-performance' }); renderer.setPixelRatio(Math.min(devicePixelRatio, PHONE ? 1.5 : 2)); renderer.setSize(innerWidth, innerHeight);
 renderer.domElement.addEventListener('webglcontextlost', e => {   // the browser took the graphics memory back: say so instead of a black screen
-  e.preventDefault(); let m = document.getElementById('lost'); if (!m) { m = document.createElement('div'); m.id = 'lost'; document.body.appendChild(m); } m.textContent = T.lost; });
+  e.preventDefault(); let m = document.getElementById('lost'); if (!m) { m = document.createElement('div'); m.id = 'lost'; document.body.appendChild(m); } if (!window.m3dReleasing) m.textContent = T.lost; });
+window.m3dRelease = () => { window.m3dReleasing = true; try { renderer.setAnimationLoop(null); renderer.dispose(); renderer.forceContextLoss(); } catch (_) {} };   // the Explorer frees the graphics memory at once when the 3D view closes (21 Nov 2026)
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
 document.body.prepend(renderer.domElement);
 // atmosphere: a physical sky, haze that thickens with distance (aerial perspective) and a low, warm sun
@@ -659,12 +660,18 @@ scene.add(pollen);
 
 // ---------- sea and lakes ----------
 let WATER = null;
-if (D.sea) {
+// a lake that lies below the village's lowest ground cannot be seen: it is not drawn (21 Nov 2026: 16 older packs carry a 'lake' at 0 m,
+// e.g. Schiltach at 322 m, and the water's material and environment map cost the most on phones for nothing)
+let tMinRel = Infinity; for (let i = 0; i < TN.a.length; i++) if (TN.a[i] < tMinRel) tMinRel = TN.a[i];
+tMinRel = tMinRel / 10 + TN.base - BASE;
+const SEA_SHOWN = D.sea && !(D.sea.mode === 'lake' && D.sea.level - BASE < tMinRel - 2);
+const PMG = SEA_SHOWN && !PHONE ? new THREE.PMREMGenerator(renderer) : null; let envRT = null;   // one generator; the previous map is freed on each mood
+if (SEA_SHOWN) {
   const nc = document.createElement('canvas'); nc.width = nc.height = 256; const ng = nc.getContext('2d'), im = ng.createImageData(256, 256);
   for (let y = 0; y < 256; y++) for (let x = 0; x < 256; x++) { const i = (y * 256 + x) * 4, a = Math.sin(x / 256 * 6.283 * 6 + Math.sin(y / 256 * 6.283 * 3) * 1.5), b = Math.cos(y / 256 * 6.283 * 7 + Math.sin(x / 256 * 6.283 * 4)); im.data[i] = 128 + 30 * a + rnd() * 10; im.data[i + 1] = 128 + 30 * b + rnd() * 10; im.data[i + 2] = 255; im.data[i + 3] = 255; }
   ng.putImageData(im, 0, 0); const nt = new THREE.CanvasTexture(nc); nt.wrapS = nt.wrapT = THREE.RepeatWrapping; nt.repeat.set(220, 220);
-  const pm = new THREE.PMREMGenerator(renderer), envScene = new THREE.Scene(); envScene.add(sky.clone());
-  const wmat = new THREE.MeshPhysicalMaterial({ color: col(D.sea.colour), roughness: 0.28, metalness: 0.0, normalMap: nt, normalScale: new THREE.Vector2(0.22, 0.22), envMap: pm.fromScene(envScene).texture, envMapIntensity: 0.45, transparent: true, opacity: 0.96 });
+  const wmat = PHONE ? new THREE.MeshStandardMaterial({ color: col(D.sea.colour), roughness: 0.3, metalness: 0.0, normalMap: nt, normalScale: new THREE.Vector2(0.22, 0.22), transparent: true, opacity: 0.96 })
+    : new THREE.MeshPhysicalMaterial({ color: col(D.sea.colour), roughness: 0.28, metalness: 0.0, normalMap: nt, normalScale: new THREE.Vector2(0.22, 0.22), envMapIntensity: 0.45, transparent: true, opacity: 0.96 });   // the environment map comes with the first mood
   const LAKE = D.sea.mask && LCN;   // a lake is drawn only where the satellite sees water (accuracy review, 18 Nov 2026); the sea runs to the horizon
   if (LAKE) {
     const n = LCN.n, c = document.createElement('canvas'); c.width = c.height = n; const g = c.getContext('2d'), im = g.createImageData(n, n);
@@ -706,7 +713,7 @@ function applyMood(m) {
   wallMat.emissiveIntensity = m.win;
   for (const x of mists) x.material.color.set(m.fog).lerp(new THREE.Color('#eef2f2'), m.el > 0 ? 0.7 : 0.15);   // mist takes the light of the hour
   pollen.material.opacity = m.el > 0 ? 0.6 : 0.08;
-  if (WATER) { const s = new THREE.Scene(); s.add(sky.clone()); WATER.envMap = new THREE.PMREMGenerator(renderer).fromScene(s).texture; WATER.envMapIntensity = m.el > 0 ? 0.45 : 0.2; }
+  if (WATER && PMG) { const s = new THREE.Scene(); s.add(sky.clone()); const rt = PMG.fromScene(s); if (envRT) envRT.dispose(); envRT = rt; WATER.envMap = rt.texture; WATER.envMapIntensity = m.el > 0 ? 0.45 : 0.2; }   // one map at a time (21 Nov 2026: each switch leaked one)
 }
 const moodsEl = document.getElementById('moods');
 for (const k of ['day', 'golden', 'dusk', 'night']) {
@@ -930,6 +937,7 @@ if (D.lmk) {
 const tBuild = performance.now();
 document.getElementById('load').remove();
 document.getElementById('hud').hidden = !q.has('debug');   // figures for development only
+if (q.has('debug')) window.__dbg = { renderer, scene, camera };   // development only: draw counts and scene contents for checks (21 Nov 2026)
 document.getElementById('title').textContent = D.btv; document.getElementById('title').insertAdjacentHTML('beforeend', '<small></small>'); document.getElementById('title').querySelector('small').textContent = `${q.get('c') || D.country} · ${T.pilot}`;
 document.title = `${D.btv} · ${T.pilot}`; document.getElementById('note').innerHTML = T.note.replace(/<\/b>\s*/, '</b> <span class="more">') + '</span>';
 document.getElementById('note').onclick = e => { if (!e.target.closest('a')) { e.currentTarget.classList.toggle('open'); document.getElementById('bottom').classList.toggle('open', e.currentTarget.classList.contains('open')); } };   // phones: tap to read the whole note and credit
@@ -953,7 +961,7 @@ function stats() {
     ['Frame rate', fps ? fps + ' fps' + (quality.low ? ' (contact shading off on this device)' : '') : '…']].map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join('');
 }
 stats();
-window.procInfo = () => ({ bytes, genMs: Math.round(tBuild - tFetch), buildings: nB, landmarks: nLand, heroTris: nLmk,trees: spots.length, noTower: nNoTower, lake: !!(D.sea && D.sea.mask), lcTrees, shrubs: nShrub, stones: nStone, climate: KG, fps, aoOff: !!quality.low });
+window.procInfo = () => ({ bytes, genMs: Math.round(tBuild - tFetch), buildings: nB, landmarks: nLand, heroTris: nLmk,trees: spots.length, noTower: nNoTower, lake: !!(D.sea && D.sea.mask), water: !!SEA_SHOWN, lcTrees, shrubs: nShrub, stones: nStone, climate: KG, fps, aoOff: !!quality.low });
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; setFov(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
 const qt = []; let qLast = 0, qDone = false;
 function quality(now) {
