@@ -151,6 +151,13 @@ const STR = {
 const T = STR[STR[q.get('lang')] ? q.get('lang') : 'en'];
 document.documentElement.lang = STR[q.get('lang')] ? q.get('lang') : 'en'; if (q.get('lang') === 'ar') document.documentElement.dir = 'rtl';
 if (!window.m3dFailed) document.getElementById('loadTxt').textContent = T.load;   // a message already shown (no WebGL) stays
+// generation in short steps (21 Nov 2026, Jost: 'double check stability of browser while village is generated'): the village was built in
+// one task of 3-15 s on a phone, so the page (and the Explorer around it) could not react; now it pauses every ~40 ms of work, shows
+// how far it is, and a closed view stops. The order of the work, and so the seeded village, is unchanged.
+let LASTY = performance.now();
+const busy = () => performance.now() - LASTY > 40;
+const STAGES = [];   // development only (?debug): how long each step ran without a pause
+async function breathe(pct) { if (q.has('debug')) STAGES.push([pct, Math.round(performance.now() - LASTY)]); const t = document.getElementById('loadTxt'); if (t && !window.m3dFailed && pct != null) t.textContent = T.load + ' ' + Math.min(99, Math.round(pct)) + '%'; await new Promise(r => setTimeout(r, 0)); LASTY = performance.now(); }
 async function m3dGet(name, type) {   // plain file locally; online the encrypted copy, opened with the key the password page left for this tab (as viewer.html)
   const P = window.m3dPre || {}, early = P.files && P.files[name] ? await P.files[name] : null;   // started in the page head
   if (early && !P.gh) { const t = new TextDecoder().decode(early); return type === 'json' ? JSON.parse(t) : early; }
@@ -188,6 +195,7 @@ function hAt(T, x, y) {   // x east, y north, metres; bilinear
 }
 const gh = (x, y) => hAt(TN, x, y);
 
+await breathe(4);
 // ---------- scene ----------
 // phones (21 Nov 2026, Jost: 'check if the models load properly on mobile'): a lighter profile, so the view stays within a phone's graphics memory
 const PHONE = (matchMedia('(pointer: coarse)').matches && Math.min(innerWidth, innerHeight) < 600) || (navigator.deviceMemory > 0 && navigator.deviceMemory <= 4) || q.has('phone');
@@ -251,33 +259,126 @@ function lcTexture(G, Wpx, T) {
 }
 const lcAt = (x, y) => { if (!LCN) return 0; const n = LCN.n, i = Math.floor((x + LCN.size / 2) / LCN.size * n), j = Math.floor((LCN.size / 2 - y) / LCN.size * n); return i < 0 || j < 0 || i >= n || j >= n ? 0 : LCN.a[j * n + i]; };
 
+await breathe(10);
 // ---------- ground texture painted from the open data ----------
-const W = 4096, cv = document.createElement('canvas'); cv.width = cv.height = W; const cx = cv.getContext('2d');
+const W = PHONE ? 2048 : 4096, cv = document.createElement('canvas'); cv.width = cv.height = W; const cx = cv.getContext('2d');   // phones: 2048 (16 MB instead of 64 MB, and on the graphics card with mipmaps)
 const SZ = D.terrain.size, P = v => (v / 4 + SZ / 2) / SZ * W, PY = v => (SZ / 2 - v / 4) / SZ * W, PX = W / SZ;
-cx.fillStyle = '#6f8a4e'; cx.fillRect(0, 0, W, W); if (LCN) paintLC(cx, LCN, W, TN);   // land cover first, then the mapped fields, woods, water and roads on top
+cx.fillStyle = '#6f8a4e'; cx.fillRect(0, 0, W, W); if (LCN) paintLC(cx, LCN, W, TN); await breathe(11);   // land cover first, then the mapped fields, woods, water and roads on top
 cx.globalCompositeOperation = 'soft-light'; for (let i = 0; i < 14000; i++) { const gv = 80 + rnd() * 96; rnd(); rnd(); cx.fillStyle = `rgba(${gv},${gv},${gv},.3)`;   /* blotches that darken or lighten the land cover's own colour */ const r = 2 + rnd() * 12; cx.beginPath(); cx.arc(rnd() * W, rnd() * W, r, 0, 7); cx.fill(); }
-cx.globalCompositeOperation = 'source-over';
+cx.globalCompositeOperation = 'source-over'; await breathe(12);
 const poly = (f, close = true) => { cx.beginPath(); for (let i = 0; i < f.length; i += 2) (i ? cx.lineTo : cx.moveTo).call(cx, P(f[i]), PY(f[i + 1])); if (close) cx.closePath(); };
 const FIELD = ['#9aa45a', '#87a161', '#7b8f4c'].map(c => mixHex(c, '#bca97a', DRY * 0.65));
 for (const [f, k] of D.f) { poly(f); cx.fillStyle = FIELD[k]; cx.fill(); cx.save(); cx.clip(); cx.strokeStyle = 'rgba(60,70,30,.25)'; cx.lineWidth = 1; const a = rnd() * 3; for (let i = -W; i < W; i += 7) { cx.beginPath(); cx.moveTo(P(f[0]) + Math.cos(a) * -W + i * Math.sin(a), PY(f[1]) + Math.sin(a) * -W - i * Math.cos(a)); cx.lineTo(P(f[0]) + Math.cos(a) * W + i * Math.sin(a), PY(f[1]) + Math.sin(a) * W - i * Math.cos(a)); cx.stroke(); } cx.restore(); }
+await breathe(13);
 for (const f of D.w) { poly(f); cx.fillStyle = '#41562f'; cx.fill(); }
-for (const [f, line] of D.water) { if (line) { poly(f, false); cx.strokeStyle = '#4f6f78'; cx.lineWidth = 5 * PX; cx.stroke(); } else { poly(f); cx.fillStyle = '#4f6f78'; cx.fill(); } }
+// water (21 Nov 2026, Jost: 'improve water body generation'): D.water rows are [flat, line, kind, width, holes] (tools/model3d/water_osm.py);
+// older packs carry [flat, line] only. Kinds: lines 0 stream, 1 river, 2 canal, 3 ditch, 4 dry bed; areas 0 still water, 1 river area, 4 dry
+const WF = D.water.map(([f, line, kind, w, holes]) => ({ f, line: !!line, kind: kind === undefined ? 0 : kind, w: line ? (w || 5) : 0, holes: holes || [] }));
+const WCOLG = mixHex('#3b5a61', '#556a5e', DRY * 0.4), BANKC = mixHex('#5d5b44', '#8a7b5c', DRY), DRYBED = mixHex('#b5a88a', '#d6c6a0', DRY);
+const ringTo = (g, f, X, Y) => { for (let i = 0; i < f.length; i += 2) (i ? g.lineTo : g.moveTo).call(g, X(f[i]), Y(f[i + 1])); g.closePath(); };
 cx.lineCap = cx.lineJoin = 'round';
+for (const c of WF) {
+  if (c.line) {
+    poly(c.f, false);
+    if (c.kind === 4) { cx.globalAlpha = 0.7; cx.strokeStyle = DRYBED; cx.lineWidth = c.w * PX; cx.stroke(); cx.globalAlpha = 0.45; cx.strokeStyle = mixHex(DRYBED, '#efe6cf', 0.5); cx.lineWidth = c.w * 0.4 * PX; cx.stroke(); cx.globalAlpha = 1; continue; }   // a seasonal bed: gravel and sand, no water
+    if (c.w >= 2) { cx.globalAlpha = 0.5; cx.strokeStyle = BANKC; cx.lineWidth = (c.w + 3) * PX; cx.stroke(); cx.globalAlpha = 1; }   // muddy banks
+    cx.strokeStyle = WCOLG; cx.lineWidth = c.w * PX; cx.stroke();
+  } else {
+    cx.beginPath(); ringTo(cx, c.f, P, PY); for (const r of c.holes) ringTo(cx, r, P, PY);
+    if (c.kind === 4) { cx.globalAlpha = 0.65; cx.fillStyle = DRYBED; cx.fill('evenodd'); cx.globalAlpha = 1; continue; }
+    cx.globalAlpha = 0.5; cx.strokeStyle = BANKC; cx.lineWidth = 3 * PX; cx.stroke(); cx.globalAlpha = 1; cx.fillStyle = WCOLG; cx.fill('evenodd');
+  }
+}
+await breathe(14);
 for (const [f, w] of [...D.r].sort((a, b) => a[1] - b[1])) { poly(f, false); cx.strokeStyle = w < 1.6 ? '#b7ab8c' : '#8d8a83'; cx.lineWidth = w * PX; cx.stroke(); }
 { const n = document.createElement('canvas'); n.width = n.height = 256; const g = n.getContext('2d'), im = g.createImageData(256, 256);   // ground grain
   for (let i = 0; i < im.data.length; i += 4) { const v = 110 + rnd() * 70; im.data[i] = im.data[i + 1] = im.data[i + 2] = v; im.data[i + 3] = 255; }
   g.putImageData(im, 0, 0); cx.globalCompositeOperation = 'overlay'; cx.globalAlpha = 0.45; cx.fillStyle = cx.createPattern(n, 'repeat'); cx.fillRect(0, 0, W, W); cx.globalAlpha = 1; cx.globalCompositeOperation = 'source-over'; }
+await breathe(15);
 const gtex = new THREE.CanvasTexture(cv); gtex.colorSpace = THREE.SRGBColorSpace; gtex.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
-function terrainMesh(T, mat, sink) {
+function terrainMesh(T, mat, sink, adj) {
   const g = new THREE.PlaneGeometry(T.size, T.size, T.n - 1, T.n - 1); g.rotateX(-Math.PI / 2);
   const p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = -p.getZ(i); let h = T.a[i] / 10 + T.base - BASE; if (sink && Math.abs(x) < TN.size / 2 - 40 && Math.abs(y) < TN.size / 2 - 40) h = Math.min(h, gh(x, y)) - 6; p.setY(i, h); }
+  for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = -p.getZ(i); let h = T.a[i] / 10 + T.base - BASE; if (sink && Math.abs(x) < TN.size / 2 - 40 && Math.abs(y) < TN.size / 2 - 40) h = Math.min(h, gh(x, y)) - 6; if (adj) h = adj(x, y, h); p.setY(i, h); }
   g.computeVertexNormals(); const m = new THREE.Mesh(g, mat); m.receiveShadow = true; return m;
 }
-scene.add(terrainMesh(TN, new THREE.MeshStandardMaterial({ map: gtex, roughness: 1 })));
+function waveSlopes(N) {   // x and y slopes of a wave field, scaled to -1..1; no draw from the village's random sequence
+  const W = [[2, 1, 0.0], [-1, 3, 1.3], [4, -2, 2.1], [3, 5, 0.7], [-5, 2, 4.0], [6, 3, 2.9], [-2, -7, 5.1], [8, -1, 1.7], [1, 9, 3.6], [-9, 4, 0.4], [11, 6, 2.2], [-4, 12, 4.7]];
+  const gx = new Float32Array(N * N), gy = new Float32Array(N * N); let mx = 1e-6;
+  for (const [kx, ky, ph] of W) {   // cos(A + B) = cos A cos B - sin A sin B with tables per row and column: no trigonometry per pixel
+    const amp = Math.pow(kx * kx + ky * ky, -0.4), cA = new Float32Array(N), sA = new Float32Array(N), cB = new Float32Array(N), sB = new Float32Array(N);
+    for (let t = 0; t < N; t++) { cA[t] = Math.cos(6.2832 * kx * t / N); sA[t] = Math.sin(6.2832 * kx * t / N); cB[t] = Math.cos(6.2832 * ky * t / N + ph); sB[t] = Math.sin(6.2832 * ky * t / N + ph); }
+    for (let y = 0; y < N; y++) { const cb = cB[y] * amp, sb = sB[y] * amp, o = y * N; for (let x = 0; x < N; x++) { const c = cA[x] * cb - sA[x] * sb; gx[o + x] += c * kx; gy[o + x] += c * ky; } }
+  }
+  for (let i = 0; i < N * N; i++) mx = Math.max(mx, Math.abs(gx[i]), Math.abs(gy[i]));
+  for (let i = 0; i < N * N; i++) { gx[i] /= mx; gy[i] /= mx; }
+  return [gx, gy];
+}
+// still water lies flat at the height of its shore (lowest fifth of the shoreline heights, sampled every 3 m); a pond or lake the sea or
+// the satellite lake already shows is left to it. The terrain under still water is lowered for drawing only: houses keep their ground.
+const SEAREL = D.sea ? D.sea.level - BASE : -Infinity;
+const STILL = [];
+for (const c of WF) if (!c.line && c.kind === 0) {
+  const f = c.f, sh = []; let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < f.length; i += 2) {
+    const ax = f[i] / 4, ay = f[i + 1] / 4, j = (i + 2) % f.length, bx = f[j] / 4, by = f[j + 1] / 4, m = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 3));
+    for (let k = 0; k < m; k++) sh.push(gh(ax + (bx - ax) * k / m, ay + (by - ay) * k / m));
+    x0 = Math.min(x0, ax); x1 = Math.max(x1, ax); y0 = Math.min(y0, ay); y1 = Math.max(y1, ay);
+  }
+  sh.sort((a, b) => a - b); c.level = sh[Math.floor(sh.length * 0.2)]; c.box = [x0, y0, x1, y1];
+  if (D.sea && c.level <= SEAREL + 3) { c.skip = true; continue; }
+  STILL.push(c);
+}
+// which still water lies at a point: the bodies drawn once into a lookup map (2.25 m), so each of the 66,000 terrain points is one read
+// instead of a test against every shore (21 Nov 2026: 1.1-1.5 s on a slowed phone for Aínsa's reservoir and Óbidos's 31 ponds)
+const SIN = 1024; let SIDX = null;
+if (STILL.length) {
+  const c = document.createElement('canvas'); c.width = c.height = SIN; const g = c.getContext('2d', { willReadFrequently: true });
+  const X = v => (v / 4 + SZ / 2) / SZ * SIN, Y = v => (SZ / 2 - v / 4) / SZ * SIN;
+  STILL.slice(0, 2600).forEach((s, k) => { const id = k + 1; g.fillStyle = `rgb(${(id % 51) * 5},${Math.floor(id / 51) * 5},0)`; g.beginPath(); ringTo(g, s.f, X, Y); for (const r of s.holes) ringTo(g, r, X, Y); g.fill('evenodd'); });   // ids in steps of 5, safe from edge rounding
+  SIDX = g.getImageData(0, 0, SIN, SIN).data;
+}
+await breathe(15.2);
+const stillAt = (x, y) => { if (!SIDX) return null; const i = Math.floor((x + SZ / 2) / SZ * SIN), j = Math.floor((SZ / 2 - y) / SZ * SIN); if (i < 0 || j < 0 || i >= SIN || j >= SIN) return null; const o = (j * SIN + i) * 4; if (SIDX[o + 3] < 128) return null; const s = STILL[Math.round(SIDX[o] / 5) + 51 * Math.round(SIDX[o + 1] / 5) - 1]; return s ? s.level : null; };
+const SINK = (x, y, h) => { const l = STILL.length ? stillAt(x, y) : null; return l === null ? h : Math.min(h, l - 0.7); };
+scene.add(terrainMesh(TN, new THREE.MeshStandardMaterial({ map: gtex, roughness: 1 }), false, SINK)); await breathe(15.5);
+// the water surface: a skin on the terrain grid itself (same vertices and triangles, so it never dips under the ground), 0.35 m above
+// running water and level on still water, cut to the mapped shapes by a mask; roads cut it, so bridges and fords stay visible
+let SKIN = null, skinTris = 0;
+if (WF.some(c => c.kind !== 4 && !c.skip && !(c.line && c.kind === 3))) {
+  const WMN = PHONE ? 1024 : 2048, wmc = document.createElement('canvas'); wmc.width = wmc.height = WMN; const wg = wmc.getContext('2d');
+  const WX = v => (v / 4 + SZ / 2) / SZ * WMN, WY = v => (SZ / 2 - v / 4) / SZ * WMN, WPX = WMN / SZ;
+  wg.fillStyle = '#000'; wg.fillRect(0, 0, WMN, WMN); wg.fillStyle = wg.strokeStyle = '#fff'; wg.lineCap = wg.lineJoin = 'round';
+  for (const c of WF) {
+    if (c.kind === 4 || c.skip || (c.line && c.kind === 3)) continue;   // dry beds and ditches stay painted on the ground
+    wg.beginPath();
+    if (c.line) { for (let i = 0; i < c.f.length; i += 2) (i ? wg.lineTo : wg.moveTo).call(wg, WX(c.f[i]), WY(c.f[i + 1])); wg.lineWidth = Math.max(1.2, c.w * WPX); wg.stroke(); }
+    else { ringTo(wg, c.f, WX, WY); for (const r of c.holes) ringTo(wg, r, WX, WY); wg.fill('evenodd'); }
+  }
+  wg.strokeStyle = '#000'; for (const [f, w] of D.r) if (w >= 2) { wg.beginPath(); for (let i = 0; i < f.length; i += 2) (i ? wg.lineTo : wg.moveTo).call(wg, WX(f[i]), WY(f[i + 1])); wg.lineWidth = (w + 1) * WPX; wg.stroke(); }
+  await breathe(15.6);
+  const n = TN.n, C = n - 1, dd = SZ / C, sm = document.createElement('canvas'); sm.width = sm.height = C; const sg = sm.getContext('2d', { willReadFrequently: true });
+  sg.imageSmoothingEnabled = true; sg.imageSmoothingQuality = 'high'; sg.drawImage(wmc, 0, 0, C, C);
+  const cd = sg.getImageData(0, 0, C, C).data, cov = new Uint8Array(C * C); await breathe(15.7);
+  for (let r = 0; r < C; r++) for (let c = 0; c < C; c++) if (cd[(r * C + c) * 4] > 1) for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) { const rr = r + a, cc = c + b; if (rr >= 0 && cc >= 0 && rr < C && cc < C) cov[rr * C + cc] = 1; }   // one cell of margin
+  const vid = new Int32Array(n * n).fill(-1), pos = [], uv = [], idx = [];
+  const vert = (c, r) => { const k = r * n + c; if (vid[k] < 0) { const x = -SZ / 2 + c * dd, y = SZ / 2 - r * dd, h = TN.a[k] / 10 + TN.base - BASE, l = STILL.length ? stillAt(x, y) : null; vid[k] = pos.length / 3; pos.push(x, l === null ? h + 0.35 : l + 0.05, -y); uv.push(c / C, 1 - r / C); } return vid[k]; };
+  for (let r = 0; r < C; r++) for (let c = 0; c < C; c++) if (cov[r * C + c]) { const a = vert(c, r), b = vert(c, r + 1), e = vert(c + 1, r + 1), g = vert(c + 1, r); idx.push(a, b, g, b, e, g); }   // PlaneGeometry's own triangle order
+  if (idx.length) {
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); geo.setIndex(idx); geo.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(pos.length).map((_, i) => i % 3 === 1 ? 1 : 0), 3));   // water lies level: normals straight up (on narrow rivers the bank slopes caught the sun and read white)
+    const N = 256, nc = document.createElement('canvas'); nc.width = nc.height = N; const ng = nc.getContext('2d'), im = ng.createImageData(N, N);   // ripples from sines only: no draw from the village's random sequence
+    const [sx, sy] = waveSlopes(N); for (let k = 0; k < N * N; k++) { im.data[k * 4] = 128 + 70 * sx[k]; im.data[k * 4 + 1] = 128 + 70 * sy[k]; im.data[k * 4 + 2] = 255; im.data[k * 4 + 3] = 255; }
+    ng.putImageData(im, 0, 0); await breathe(15.75); const wn = new THREE.CanvasTexture(nc); wn.wrapS = wn.wrapT = THREE.RepeatWrapping; wn.repeat.set(SZ / 36, SZ / 36); wn.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    const am = new THREE.CanvasTexture(wmc); am.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    SKIN = new (PHONE ? THREE.MeshPhongMaterial : THREE.MeshPhysicalMaterial)({ ...(PHONE ? { specular: new THREE.Color('#3a4446'), shininess: 60 } : { specularIntensity: 0.45, roughness: 0.4, metalness: 0, envMapIntensity: 0.5 }), color: D.sea ? col(D.sea.colour).lerp(new THREE.Color('#3d5e63'), 0.5) : new THREE.Color('#34545a'), normalMap: wn, normalScale: new THREE.Vector2(0.16, 0.16), alphaMap: am, transparent: true, opacity: 0.92, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });   // phones: a plain shiny material with a small, controlled highlight (glare toward a low sun read as snow)
+    const sk = new THREE.Mesh(geo, SKIN); sk.receiveShadow = true; sk.name = 'water'; scene.add(sk); skinTris = idx.length / 3; releaseCPU(geo);
+  }
+  await breathe(15.8);
+}
 scene.add(terrainMesh(TH, new THREE.MeshStandardMaterial(LCF ? { map: lcTexture(LCF, 1024, TH), roughness: 1 } : { color: '#56693f', roughness: 1 }), true));   // horizon painted from 100 m land cover
 
+await breathe(16);
 // ---------- textures for walls and roofs (drawn, not downloaded) ----------
 // Wall atlas: four bays of one storey each (window, door, plain, stone plinth). Colour channels hold the drawing; alpha marks
 // what takes the house's own colour (plaster and boards) and what keeps its own (timber frame, paper screens, glass, stone).
@@ -315,12 +416,14 @@ const WALLTEX = atlas(512, 128, (R, g) => {
   for (let y = 0; y < 128; y += 32) for (let x = (y / 32 % 2) * 20; x < 128; x += 40) { g.fillStyle = 'rgba(0,0,0,.28)'; g.fillRect(384 + x, y, 2, 32); g.fillRect(384, y, 128, 2); }
   for (let i = 0; i < 500; i++) { g.fillStyle = `rgba(${rnd() < 0.5 ? 0 : 255},${rnd() < 0.5 ? 0 : 255},${rnd() < 0.5 ? 0 : 255},.06)`; g.fillRect(384 + rnd() * 128, rnd() * 128, 3, 3); }
 });
+await breathe(17);
 const WINTEX = atlas(512, 128, (R) => {
   R(0, 0, 512, 128, '#000000');
   if (TIMBER && S.name === 'east_asian') { R(33, 29, 62, 44, '#ffc98a'); R(128 + 13, 15, 49, 58, '#ffc98a'); R(128 + 66, 15, 49, 58, '#ffc98a'); }
   else { R(46, 28, 36, 52, '#ffcf8c'); R(128 + 44, 34, 40, 30, '#7a5a3a'); }
 });
 function tileTex(draw) { const c = document.createElement('canvas'); c.width = c.height = 64; draw(c.getContext('2d')); const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t; }
+await breathe(18);
 const TILETEX = tileTex(g => {   // rounded tiles: light crowns and dark channels, a shadow line under each course
   for (let x = 0; x < 64; x++) { const s = Math.sin(x / 16 * Math.PI * 2); const v = 222 + s * 30; g.fillStyle = `rgb(${v},${v},${v})`; g.fillRect(x, 0, 1, 64); }
   const gr = g.createLinearGradient(0, 44, 0, 64); gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,.45)'); g.fillStyle = gr; g.fillRect(0, 44, 64, 20);
@@ -332,7 +435,10 @@ const THATCHTEX = tileTex(g => {   // straw: streaks down the slope, soft course
 });
 
 // ---------- geometry buffers ----------
-function Buf() { return { p: [], n: [], uv: [], c: [] }; }
+// compact buffers (21 Nov 2026): Float32 arrays that double when full, instead of plain number lists (8-12 bytes a number, copied again
+// into the mesh); about half the script memory at the peak of generation
+function F32() { return { a: new Float32Array(1 << 14), n: 0, push(x, y, z) { if (this.n + 3 > this.a.length) { const b = new Float32Array(this.a.length * 2); b.set(this.a); this.a = b; } this.a[this.n++] = x; this.a[this.n++] = y; if (z !== undefined) this.a[this.n++] = z; }, get length() { return this.n; }, view() { return this.a.subarray(0, this.n); } }; }
+function Buf() { return { p: F32(), n: F32(), uv: F32(), c: F32() }; }
 const WALL = Buf(), ROOF = Buf(), THATCH = Buf(), TRIM = Buf();
 const V = (x, y, h) => new THREE.Vector3(x, h, -y);   // x east, y north, h up
 function tri(B, a, b, c, ua, ub, uc, colr) {
@@ -458,7 +564,9 @@ const LMP = ((D.lmk && D.lmk.mask) || []).map(p => p.flatMap(([x, y]) => [x * 4,
 const inLM = (x, y) => LMP.some(f => inPolyQ(x, y, f));
 function inPolyQ(x, y, f) { let c = false; for (let i = 0, j = f.length - 2; i < f.length; j = i, i += 2) { const xi = f[i] / 4, yi = f[i + 1] / 4, xj = f[j] / 4, yj = f[j + 1] / 4; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; }
 let nNoTower = 0; const MAPPED_TOWERS =D.b.filter(b => b[3] === 3).map(([f]) => { let x = 0, y = 0; for (let i = 0; i < f.length; i += 2) { x += f[i] / 4; y += f[i + 1] / 4; } return [x / (f.length / 2), y / (f.length / 2)]; });
+let BI = 0;
 for (let [flat, hMapped, lv, kind] of D.b) {
+  BI++; if (busy()) await breathe(20 + 48 * BI / D.b.length);
   let pts = []; for (let i = 0; i < flat.length; i += 2) pts.push([flat[i] / 4, flat[i + 1] / 4]);
   if (pts.length < 3) continue;
   let A = 0; for (let i = 0; i < pts.length; i++) { const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length]; A += x1 * y2 - x2 * y1; }
@@ -501,6 +609,7 @@ for (let [flat, hMapped, lv, kind] of D.b) {
     GARDEN.push([o2.cx + o2.ux * a - o2.uy * d * sd, o2.cy + o2.uy * a + o2.ux * d * sd]); }
   nB++; if (kind) nLand++;
 }
+await breathe(68);
 // ---------- town walls ----------
 for (const [flat, wh] of D.walls || []) {
   const pts = []; for (let i = 0; i < flat.length; i += 2) pts.push([flat[i] / 4, flat[i + 1] / 4]);
@@ -528,8 +637,9 @@ for (const [flat, wh] of D.walls || []) {
   }
 }
 function mesh(B, mat) {
-  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(B.p, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(B.n, 3));
-  g.setAttribute('uv', new THREE.Float32BufferAttribute(B.uv, 2)); g.setAttribute('color', new THREE.Float32BufferAttribute(B.c, 3));
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(B.p.view(), 3)); g.setAttribute('normal', new THREE.BufferAttribute(B.n.view(), 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(B.uv.view(), 2)); g.setAttribute('color', new THREE.BufferAttribute(B.c.view(), 3));
+  if (q.has('debug')) { let s = 0; const P = B.p.a ? B.p.a : B.p, N = B.p.n != null ? B.p.n : B.p.length; for (let i = 0; i < N; i += 7) s = (s + Math.fround(P[i]) * (i % 13 + 1)) % 1e9; window.__geo = ((window.__geo || 0) + s + N) % 1e9; (window.__geoList = window.__geoList || []).push([N, Math.round(s), (mat && (mat.name || mat.type)) || '']); }   // development only: a checksum of the generated geometry
   const m = new THREE.Mesh(g, mat); m.castShadow = m.receiveShadow = true; scene.add(m); const n = B.p.length / 9;
   releaseCPU(g); B.p = B.n = B.uv = B.c = null; return n;   // the build lists are no longer needed (21 Nov 2026: memory on phones)
 }
@@ -538,15 +648,18 @@ function mesh(B, mat) {
 function releaseCPU(g) { g.computeBoundingSphere(); g.computeBoundingBox(); for (const a of Object.values(g.attributes)) a.onUpload(function () { this.array = null; }); if (g.index) g.index.onUpload(function () { this.array = null; }); }
 const wallMat = new THREE.MeshStandardMaterial({ map: WALLTEX, emissiveMap: WINTEX, emissive: 0xffffff, emissiveIntensity: 0, vertexColors: true, roughness: 0.9, side: THREE.DoubleSide });
 wallMat.onBeforeCompile = s => { s.vertexShader = 'varying vec3 vWP;\n' + s.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vWP = (modelMatrix * vec4(position, 1.0)).xyz;'); s.fragmentShader = 'varying vec3 vWP;\n' + s.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance *= step(0.45, fract(sin(dot(floor(vec3(vWP.x / 2.1, vWP.y / 2.7, vWP.z / 2.1)), vec3(12.9898, 78.233, 37.719))) * 43758.5453));').replace('#include <color_fragment>', '#ifdef USE_COLOR\n diffuseColor.rgb *= mix(vec3(1.0), vColor, sampledDiffuseColor.a);\n#endif\n diffuseColor.a = 1.0;'); };   // only plaster and boards take the house colour
-let tris = mesh(WALL, wallMat);
+let tris = mesh(WALL, wallMat); await breathe(69);
+await breathe(70);
 tris += mesh(ROOF, new THREE.MeshStandardMaterial({ map: TILETEX, vertexColors: true, roughness: 0.7, side: THREE.DoubleSide }));
 tris += mesh(THATCH, new THREE.MeshStandardMaterial({ map: THATCHTEX, vertexColors: true, roughness: 1, side: THREE.DoubleSide }));
 tris += mesh(TRIM, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide }));
 
+await breathe(72);
 // ---------- trees: cedars and broadleaf clumps in mapped woods, garden trees by the houses; all sway ----------
 function inPoly(x, y, f) { let c = false; for (let i = 0, j = f.length - 2; i < f.length; j = i, i += 2) { const xi = f[i] / 4, yi = f[i + 1] / 4, xj = f[j] / 4, yj = f[j + 1] / 4; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; }
 const spots = [];
 for (const f of D.w) {
+  if (busy()) await breathe(74);
   let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9; for (let i = 0; i < f.length; i += 2) { x0 = Math.min(x0, f[i] / 4); x1 = Math.max(x1, f[i] / 4); y0 = Math.min(y0, f[i + 1] / 4); y1 = Math.max(y1, f[i + 1] / 4); }
   const want = Math.min(3200, (x1 - x0) * (y1 - y0) / 38);
   for (let k = 0; k < want && spots.length < (PHONE ? 9000 : 16000); k++) { const x = x0 + rnd() * (x1 - x0), y = y0 + rnd() * (y1 - y0); if (Math.abs(x) < D.half + 150 && Math.abs(y) < D.half + 150 && inPoly(x, y, f)) spots.push([x, y, rnd() < (['tropical', 'palm', 'savanna'].includes(S.vegetation) ? 0 : 0.45) ? 1 : 0]);   /* no conifers in tropical or savanna woods */ }
@@ -554,7 +667,8 @@ for (const f of D.w) {
 for (const g of GARDEN) spots.push([g[0], g[1], 0, 1]);
 if (LMP.length) for (let i = spots.length; i--;) if (inLM(spots[i][0], spots[i][1])) spots.splice(i, 1);   // no trees inside the landmark's ground
 // mask at 2.5 m: red = building, road or water (nothing grows), green = mapped wood, blue = mapped field
-const MK = (() => {
+await breathe(78);
+const MK = await (async () => {   // drawn in steps (21 Nov 2026): a software canvas, slow on phones
   if (!LCN) return null;
   const sz = LCN.size, n = Math.round(sz / 2.5), c = document.createElement('canvas'); c.width = c.height = n; const g = c.getContext('2d', { willReadFrequently: true });
   const mx = v => (v / 4 + sz / 2) / sz * n, my = v => (sz / 2 - v / 4) / sz * n, pl = (f, close = true) => { g.beginPath(); for (let i = 0; i < f.length; i += 2) (i ? g.lineTo : g.moveTo).call(g, mx(f[i]), my(f[i + 1])); if (close) g.closePath(); };
@@ -562,13 +676,16 @@ const MK = (() => {
   g.fillStyle = '#00ff00'; for (const f of D.w) { pl(f); g.fill(); }
   g.fillStyle = '#0000ff'; for (const [f] of D.f) { pl(f); g.fill(); }
   g.fillStyle = g.strokeStyle = '#ff0000'; g.lineCap = g.lineJoin = 'round';
-  for (const [f] of D.b) { pl(f); g.fill(); g.lineWidth = 2.5 / 2.5 * 2; g.stroke(); }
+  for (const [f] of D.b) { if (busy()) await breathe(78); pl(f); g.fill(); g.lineWidth = 2.5 / 2.5 * 2; g.stroke(); }
   for (const f of LMP) { pl(f); g.fill(); }   // the landmark's ground: no land-cover trees, shrubs or stones
+  await breathe(78);
   for (const [f, w] of D.r) { pl(f, false); g.lineWidth = (w + 1.5) / 2.5; g.stroke(); }
-  for (const [f, line] of D.water) { if (line) { pl(f, false); g.lineWidth = 6 / 2.5; g.stroke(); } else { pl(f); g.fill(); } }
+  for (const c of WF) { if (c.kind === 4) continue; if (c.line) { pl(c.f, false); g.lineWidth = Math.max(3, c.w + 2) / 2.5; g.stroke(); } else { g.beginPath(); ringTo(g, c.f, mx, my); for (const r of c.holes) ringTo(g, r, mx, my); g.fill('evenodd'); } }   // water by its width; trees may stand in a dry bed
+  await breathe(78);
   const d = g.getImageData(0, 0, n, n).data;
   return (x, y) => { const i = Math.floor((x + sz / 2) / sz * n), j = Math.floor((sz / 2 - y) / sz * n); if (i < 0 || j < 0 || i >= n || j >= n) return 255; const o = (j * n + i) * 4; return (d[o] > 90 ? 1 : 0) | (d[o + 1] > 90 ? 2 : 0) | (d[o + 2] > 90 ? 4 : 0); };
 })();
+await breathe(79);
 let lcTrees = 0;
 if (LCN && MK) {   // WorldCover tree cover the map leaves out: orchards, hedges, palm groves, woods without a mapped outline
   const n = LCN.n, cell = LCN.size / n, lim = D.half + 150, CED = TROP || DRY > 0.5 ? 0 : S.name === 'alpine' || /^D.[cd]/.test(KG) ? 0.85 : 0.45, LCMAX = PHONE ? 3500 : 7000;   /* mountain forest is conifer; a cap keeps the frame rate (lower on phones) */
@@ -581,6 +698,7 @@ if (LCN && MK) {   // WorldCover tree cover the map leaves out: orchards, hedges
     spots.push([x, y, rnd2() < CED ? 1 : 0, 0, HOTDESERT ? 1 : 0]); lcTrees++;
   }
 }
+await breathe(80);
 const time = { value: 0 };
 const sway = m => { m.onBeforeCompile = s => { s.uniforms.uTime = time; s.vertexShader = 'uniform float uTime;\n' + s.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vec4 ip = instanceMatrix[3]; float k = max(position.y + 1.0, 0.0); transformed.x += sin(uTime * 1.1 + ip.x * 0.07 + ip.z * 0.05) * 0.05 * k; transformed.z += cos(uTime * 0.9 + ip.z * 0.06) * 0.04 * k;'); }; return m; };
 function mergeGeoms(gs) { const out = new THREE.BufferGeometry(), p = [], n = []; for (const g of gs) { const ng = g.index ? g.toNonIndexed() : g; p.push(...ng.attributes.position.array); n.push(...ng.attributes.normal.array); } out.setAttribute('position', new THREE.Float32BufferAttribute(p, 3)); out.setAttribute('normal', new THREE.Float32BufferAttribute(n, 3)); return out; }
@@ -607,6 +725,7 @@ broad.forEach(([x, y, , garden, palm], i) => {
   crown.setColorAt(i, tint.setHSL(0.21 + rnd() * 0.08, 0.38 + rnd() * 0.14, 0.12 + rnd() * 0.07));
   M4.compose(new THREE.Vector3(x, g + 1.3, -y), Q, new THREE.Vector3(1, 2.6, 1)); trunk.setMatrixAt(ti++, M4);
 });
+await breathe(82);
 ced.forEach(([x, y], i) => {
   const s = 2.2 + rnd() * 1.4, hgt = s * (3.6 + rnd() * 1.6), g = gh(x, y); Q.setFromAxisAngle(up, rnd() * 6.28);
   M4.compose(new THREE.Vector3(x, g + 2.6 + hgt * 0.33, -y), Q, new THREE.Vector3(s, hgt / 2.4, s)); cedar.setMatrixAt(i, M4);
@@ -615,6 +734,7 @@ ced.forEach(([x, y], i) => {
 });
 for (const m of [crown, cedar]) m.castShadow = m.receiveShadow = true;
 scene.add(crown, cedar, trunk);
+await breathe(84);
 // ---------- ground cover by land cover: shrubs and stones between the houses and across open ground (18 Nov 2026) ----------
 let nShrub = 0, nStone = 0;
 if (LCN && MK) {
@@ -646,6 +766,7 @@ if (LCN && MK) {
 }
 tris += broad.length * 80 + ced.length * 42;
 
+await breathe(90);
 // ---------- mist over the low ground and drifting pollen near the viewer ----------
 const mistTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d'), r = g.createRadialGradient(64, 64, 0, 64, 64, 64); r.addColorStop(0, 'rgba(255,255,255,.55)'); r.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = r; g.fillRect(0, 0, 128, 128); return new THREE.CanvasTexture(c); })();
 const mists = [];
@@ -658,6 +779,7 @@ const NP = 1600, pp = new Float32Array(NP * 3); for (let i = 0; i < NP * 3; i++)
 const pollen = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(pp, 3)), new THREE.PointsMaterial({ color: '#fff8e8', size: 0.22, transparent: true, opacity: 0.6, depthWrite: false }));
 scene.add(pollen);
 
+await breathe(92);
 // ---------- sea and lakes ----------
 let WATER = null;
 // a lake that lies below the village's lowest ground cannot be seen: it is not drawn (21 Nov 2026: 16 older packs carry a 'lake' at 0 m,
@@ -665,10 +787,11 @@ let WATER = null;
 let tMinRel = Infinity; for (let i = 0; i < TN.a.length; i++) if (TN.a[i] < tMinRel) tMinRel = TN.a[i];
 tMinRel = tMinRel / 10 + TN.base - BASE;
 const SEA_SHOWN = D.sea && !(D.sea.mode === 'lake' && D.sea.level - BASE < tMinRel - 2);
-const PMG = SEA_SHOWN && !PHONE ? new THREE.PMREMGenerator(renderer) : null; let envRT = null;   // one generator; the previous map is freed on each mood
+const PMG = (SEA_SHOWN || SKIN) && !PHONE ? new THREE.PMREMGenerator(renderer) : null; let envRT = null;   // one generator; the previous map is freed on each mood
 if (SEA_SHOWN) {
   const nc = document.createElement('canvas'); nc.width = nc.height = 256; const ng = nc.getContext('2d'), im = ng.createImageData(256, 256);
-  for (let y = 0; y < 256; y++) for (let x = 0; x < 256; x++) { const i = (y * 256 + x) * 4, a = Math.sin(x / 256 * 6.283 * 6 + Math.sin(y / 256 * 6.283 * 3) * 1.5), b = Math.cos(y / 256 * 6.283 * 7 + Math.sin(x / 256 * 6.283 * 4)); im.data[i] = 128 + 30 * a + rnd() * 10; im.data[i + 1] = 128 + 30 * b + rnd() * 10; im.data[i + 2] = 255; im.data[i + 3] = 255; }
+  const [sx, sy] = waveSlopes(256);
+  for (let y = 0; y < 256; y++) for (let x = 0; x < 256; x++) { const i = (y * 256 + x) * 4, a = sx[y * 256 + x] * 1.9, b = sy[y * 256 + x] * 1.9; im.data[i] = 128 + 30 * a + rnd() * 10; im.data[i + 1] = 128 + 30 * b + rnd() * 10; im.data[i + 2] = 255; im.data[i + 3] = 255; }
   ng.putImageData(im, 0, 0); const nt = new THREE.CanvasTexture(nc); nt.wrapS = nt.wrapT = THREE.RepeatWrapping; nt.repeat.set(220, 220);
   const wmat = PHONE ? new THREE.MeshStandardMaterial({ color: col(D.sea.colour), roughness: 0.3, metalness: 0.0, normalMap: nt, normalScale: new THREE.Vector2(0.22, 0.22), transparent: true, opacity: 0.96 })
     : new THREE.MeshPhysicalMaterial({ color: col(D.sea.colour), roughness: 0.28, metalness: 0.0, normalMap: nt, normalScale: new THREE.Vector2(0.22, 0.22), envMapIntensity: 0.45, transparent: true, opacity: 0.96 });   // the environment map comes with the first mood
@@ -682,6 +805,7 @@ if (SEA_SHOWN) {
   const wm = new THREE.Mesh(new THREE.PlaneGeometry(LAKE ? LCN.size : 16000, LAKE ? LCN.size : 16000), wmat); wm.rotation.x = -Math.PI / 2; wm.position.y = D.sea.level - BASE + 0.15; wm.receiveShadow = true; scene.add(wm);
   window.procWater = wm; WATER = wmat;
 }
+await breathe(94);
 // ---------- view ----------
 const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.maxPolarAngle = 1.45;
 const cy0 = gh(0, 0); controls.target.set(0, cy0, 0); camera.position.set(-380, cy0 + 260, 420);
@@ -713,7 +837,7 @@ function applyMood(m) {
   wallMat.emissiveIntensity = m.win;
   for (const x of mists) x.material.color.set(m.fog).lerp(new THREE.Color('#eef2f2'), m.el > 0 ? 0.7 : 0.15);   // mist takes the light of the hour
   pollen.material.opacity = m.el > 0 ? 0.6 : 0.08;
-  if (WATER && PMG) { const s = new THREE.Scene(); s.add(sky.clone()); const rt = PMG.fromScene(s); if (envRT) envRT.dispose(); envRT = rt; WATER.envMap = rt.texture; WATER.envMapIntensity = m.el > 0 ? 0.45 : 0.2; }   // one map at a time (21 Nov 2026: each switch leaked one)
+  if ((WATER || SKIN) && PMG) { const s = new THREE.Scene(); s.add(sky.clone()); const rt = PMG.fromScene(s); if (envRT) envRT.dispose(); envRT = rt; for (const w of [WATER, SKIN]) if (w) { w.envMap = rt.texture; w.envMapIntensity = (m.el > 0 ? 0.45 : 0.2) * (w === SKIN ? 0.6 : 1); } }   // one map at a time (21 Nov 2026: each switch leaked one)
 }
 const moodsEl = document.getElementById('moods');
 for (const k of ['day', 'golden', 'dusk', 'night']) {
@@ -934,10 +1058,26 @@ if (D.lmk) {
     }
   } catch (e) { console.warn('landmark not loaded', e); }
 }
+await breathe(97);
+{ // textures go to the graphics card one by one before the first frame, so that frame has only the geometry left to send (21 Nov 2026)
+  const tx = new Set(); scene.traverse(o => { const ms = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : []; for (const m of ms) for (const k of ['map', 'alphaMap', 'emissiveMap', 'normalMap']) if (m[k] && m[k].isTexture) tx.add(m[k]); });
+  for (const t of tx) { try { renderer.initTexture(t); } catch (_) {} if (busy()) await breathe(98); }
+}
+try { await renderer.compileAsync(scene, camera); } catch (_) {}   // shaders compile in the background where the device can
+{ // the scene goes to the graphics card in a few batches of about 300,000 points, each in its own frame behind the progress line, so no
+  // single frame carries the whole upload (21 Nov 2026: the first frame froze the page for 2-3 s on a slow phone). Lights stay in place
+  // (a light added later recompiles every material) and shadows are drawn once at the end: one render per part cost Siwa 9 s on a slow phone.
+  const kids = scene.children.filter(k => k.isMesh || k.isPoints || k.isGroup); for (const k of kids) scene.remove(k);
+  const pts = o => { let n = 0; o.traverse(m => { const p = m.geometry && m.geometry.attributes.position; if (p) n += p.count + (m.isInstancedMesh ? m.count * 4 : 0); }); return n; };
+  const sm = renderer.shadowMap.autoUpdate; renderer.shadowMap.autoUpdate = false; let load = 0;
+  for (let i = 0; i < kids.length; i++) { scene.add(kids[i]); load += pts(kids[i]); if (load > 300000 || i === kids.length - 1) { try { renderer.render(scene, camera); } catch (_) {} load = 0; await breathe(99); } }
+  renderer.shadowMap.autoUpdate = sm; renderer.shadowMap.needsUpdate = true;
+}
+try { composer.render(); } catch (_) {} await breathe(99);   // the effect passes compile behind the progress line too, not in the first visible frame
 const tBuild = performance.now();
 document.getElementById('load').remove();
 document.getElementById('hud').hidden = !q.has('debug');   // figures for development only
-if (q.has('debug')) window.__dbg = { renderer, scene, camera };   // development only: draw counts and scene contents for checks (21 Nov 2026)
+if (q.has('debug')) window.__dbg = { renderer, scene, camera, STAGES, composer };   // development only: draw counts and scene contents for checks (21 Nov 2026)
 document.getElementById('title').textContent = D.btv; document.getElementById('title').insertAdjacentHTML('beforeend', '<small></small>'); document.getElementById('title').querySelector('small').textContent = `${q.get('c') || D.country} · ${T.pilot}`;
 document.title = `${D.btv} · ${T.pilot}`; document.getElementById('note').innerHTML = T.note.replace(/<\/b>\s*/, '</b> <span class="more">') + '</span>';
 document.getElementById('note').onclick = e => { if (!e.target.closest('a')) { e.currentTarget.classList.toggle('open'); document.getElementById('bottom').classList.toggle('open', e.currentTarget.classList.contains('open')); } };   // phones: tap to read the whole note and credit
@@ -961,7 +1101,7 @@ function stats() {
     ['Frame rate', fps ? fps + ' fps' + (quality.low ? ' (contact shading off on this device)' : '') : '…']].map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join('');
 }
 stats();
-window.procInfo = () => ({ bytes, genMs: Math.round(tBuild - tFetch), buildings: nB, landmarks: nLand, heroTris: nLmk,trees: spots.length, noTower: nNoTower, lake: !!(D.sea && D.sea.mask), water: !!SEA_SHOWN, lcTrees, shrubs: nShrub, stones: nStone, climate: KG, fps, aoOff: !!quality.low });
+window.procInfo = () => ({ bytes, genMs: Math.round(tBuild - tFetch), buildings: nB, landmarks: nLand, heroTris: nLmk,trees: spots.length, noTower: nNoTower, lake: !!(D.sea && D.sea.mask), water: !!SEA_SHOWN, waterSkin: skinTris, still: STILL.length, waterRows: WF.length, lcTrees, shrubs: nShrub, stones: nStone, climate: KG, fps, aoOff: !!quality.low });
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; setFov(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
 const qt = []; let qLast = 0, qDone = false;
 function quality(now) {
@@ -973,6 +1113,7 @@ renderer.setAnimationLoop(() => {
   const tt = performance.now() / 1000; time.value = tt; controls.update();
   for (const m of mists) { m.position.x += Math.sin(tt * 0.05 + m.userData.v) * 0.04 * m.userData.v; const d = m.position.distanceTo(camera.position); m.material.opacity = 0.2 * MOOD.mist * Math.min(1, Math.max(0, (d - 250) / 450)) * Math.min(1, Math.max(0, (2200 - d) / 900)); }   // seen from afar or from high above, mist read as grey smears (Saas-Fee)   // mist reads from afar only: up close it would wash out what it covers
   pollen.position.copy(controls.target); pollen.position.y += 20; pollen.rotation.y = tt * 0.01;
+  if (SKIN && !reduceMotion) SKIN.normalMap.offset.set(tt * 0.006, tt * 0.004);   // ripples drift slowly
   updatePois();
   composer.render();
   frames++; const now = performance.now(); if (now - tf > 1000) { fps = Math.round(frames * 1000 / (now - tf)); frames = 0; tf = now; stats(); }
